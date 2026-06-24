@@ -1,0 +1,14 @@
+{
+  "name": "Daybook",
+  "short_name": "Daybook",
+  "description": "A calm, scheduling-first task manager. You jot a thought; it proposes a slot; you decide.",
+  "theme_color": "#FAF7F0",
+  "background_color": "#FAF7F0",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Next.js
+.next
+next-env.d.ts
+out
+
+# Env & local database
+.env
+.env*.local
+data/
+drizzle/
+
+# TS build artifacts
+*.tsbuildinfo
+.tsbuild-node
+dev-dist
+
+# Local tooling (machine-specific Claude Code config)
+.claude/
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
