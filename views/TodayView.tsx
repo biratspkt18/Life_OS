@@ -1,79 +1,135 @@
-import { useMemo } from "react";
-import { useTodayItems } from "../hooks/useDb";
-import type { TodayItem } from "../lib/types";
-import { format } from "../lib/dates";
-import { Spotlight } from "../components/Spotlight";
-import { TaskRow } from "../components/TaskRow";
-
-/** Pick the now/next spotlight: a current block, else the next upcoming one. */
-function pickSpotlight(items: TodayItem[], now: Date): TodayItem | null {
-  const live = items.filter((t) => !t.completed && t.start && !t.allDay);
-  const current = live.find((t) => {
-    const s = new Date(t.start!);
-    const end =
-      t.durationMinutes != null ? new Date(s.getTime() + t.durationMinutes * 60_000) : null;
-    return end ? s <= now && now < end : false;
-  });
-  if (current) return current;
-  const upcoming = live
-    .filter((t) => new Date(t.start!) >= now)
-    .sort((a, b) => new Date(a.start!).getTime() - new Date(b.start!).getTime());
-  return upcoming[0] ?? null;
-}
+"use client";
+import { useMemo, useState } from "react";
+import { useDayItems, usePastUndoneTasks, useSettings } from "../hooks/useDb";
+import { IMPORTANCE_RANK, windowForDay } from "../lib/types";
+import { addDays, dayLabel, format, isSameDay, startOfDay, timeLabel } from "../lib/dates";
+import { buildDayShape, groupDay } from "../lib/dayShape";
+import { DayFeed } from "../components/DayFeed";
+import { LooseEndSuggestion } from "../components/LooseEndSuggestion";
+import { DoneToday } from "../components/DoneToday";
+import { Timeline } from "../components/overview/Timeline";
 
 export function TodayView({ now }: { now: Date }) {
-  const items = useTodayItems(now);
-  const spotlight = useMemo(() => pickSpotlight(items, now), [items, now]);
-  const rest = useMemo(
-    () => items.filter((t) => t.id !== spotlight?.id),
-    [items, spotlight],
-  );
+  // The day being viewed — defaults to today every time the app opens.
+  const [day, setDay] = useState<Date>(() => startOfDay(now));
+  const isToday = isSameDay(day, now);
 
-  // "Things ahead" counts open Daybook tasks (Google events aren't completable).
-  const remaining = items.filter((t) => t.source === "daybook" && !t.completed).length;
+  const settings = useSettings();
+  const items = useDayItems(day);
+
+  const dayWindow = useMemo(() => windowForDay(settings, day), [settings, day]);
+  const shape = useMemo(
+    () => buildDayShape(items, dayWindow, day, now, settings.defaultDurationMinutes),
+    [items, dayWindow, day, now, settings.defaultDurationMinutes],
+  );
+  const groups = useMemo(() => groupDay(items, now), [items, now]);
+
+  // Past, unchecked tasks that slipped (today only). A current in-progress block
+  // is the spotlight, never a loose end. The one-at-a-time suggestion only nudges
+  // when there's free time left in the day.
+  const pastUndone = usePastUndoneTasks(now);
+  const looseEnds = useMemo(
+    () =>
+      isToday
+        ? pastUndone
+            .filter((t) => t.id !== groups.spotlight?.id)
+            .sort(
+              (a, b) =>
+                IMPORTANCE_RANK[b.importance] - IMPORTANCE_RANK[a.importance] ||
+                new Date(a.scheduledStart!).getTime() - new Date(b.scheduledStart!).getTime(),
+            )
+        : [],
+    [pastUndone, isToday, groups.spotlight],
+  );
+  const hasRoom = shape.remainingFreeMinutes > 0;
+
+  const countLabel = useMemo(() => {
+    if (items.length === 0) return null;
+    if (!isToday) return `${items.length} thing${items.length === 1 ? "" : "s"}`;
+    if (groups.toGoCount === 0) return "all done";
+    const done = groups.doneCount > 0 ? `${groups.doneCount} done · ` : "";
+    return `${done}${groups.toGoCount} to go`;
+  }, [items.length, isToday, groups]);
 
   return (
     <section>
-      <header className="mb-5">
-        <h1 className="text-2xl font-bold tracking-tight text-ink">Today</h1>
-        <p className="mt-0.5 text-sm text-muted">
-          {format(now, "EEEE, d MMMM")}
-          {items.length > 0 && (
-            <>
-              <span className="mx-1.5 text-muted-soft">·</span>
-              {remaining === 0
-                ? "all done"
-                : `${remaining} thing${remaining === 1 ? "" : "s"} ahead`}
-            </>
+      <header className="mb-5 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-bold tracking-tight text-ink">{dayLabel(day)}</h1>
+          <p className="mt-1 text-sm text-muted">{format(day, "EEEE, d MMMM")}</p>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {isToday && (
+            <p className="text-sm font-semibold text-accent">{timeLabel(now)}</p>
           )}
-        </p>
+          <div className="flex items-center gap-1">
+            <DayNavButton label="Previous day" onClick={() => setDay((d) => addDays(d, -1))}>
+              ‹
+            </DayNavButton>
+            {!isToday && (
+              <button
+                onClick={() => setDay(startOfDay(now))}
+                className="rounded-full px-3 py-1.5 text-sm font-medium text-muted hover:text-ink"
+              >
+                Today
+              </button>
+            )}
+            <DayNavButton label="Next day" onClick={() => setDay((d) => addDays(d, 1))}>
+              ›
+            </DayNavButton>
+          </div>
+          {countLabel && (
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-soft">
+              {countLabel}
+            </p>
+          )}
+        </div>
       </header>
 
-      {spotlight && <Spotlight item={spotlight} now={now} />}
+      <Timeline shape={shape} now={now} isToday={isToday} />
 
-      {rest.length > 0 && (
-        <div className="space-y-2.5">
-          {rest.map((t) => (
-            <TaskRow key={t.id} item={t} />
-          ))}
-        </div>
+      {items.length === 0 && isToday && (
+        <p className="mb-6 text-sm text-muted">
+          Nothing scheduled yet — tap the&nbsp;+&nbsp;or press&nbsp;
+          <kbd className="rounded bg-paper-edge px-1.5 py-0.5 text-xs font-semibold">n</kbd> to fill
+          your day.
+        </p>
       )}
 
-      {items.length === 0 && (
-        <div className="surface mt-2 px-6 py-12 text-center">
-          <p className="text-lg font-medium text-ink">Nothing scheduled</p>
-          <p className="mt-1 text-sm text-muted">
-            Jot something down — tap the&nbsp;+&nbsp;or press&nbsp;
-            <kbd className="rounded bg-paper-edge px-1.5 py-0.5 text-xs font-semibold">n</kbd>.
-          </p>
-        </div>
-      )}
+      <DayFeed groups={groups} now={now} />
 
-      {items.length > 0 && remaining === 0 && (
-        <div className="mt-5 text-center text-sm text-muted">
-          That's everything for today. Nice.
-        </div>
-      )}
+      {isToday && hasRoom && <LooseEndSuggestion tasks={looseEnds} now={now} />}
+
+      {isToday && <DoneToday items={items} now={now} />}
+
+      {isToday &&
+        items.length > 0 &&
+        groups.toGoCount === 0 &&
+        groups.upcoming.length === 0 &&
+        looseEnds.length === 0 && (
+          <div className="mt-6 text-center text-sm text-muted">You’re all done for today. ✦</div>
+        )}
     </section>
+  );
+}
+
+function DayNavButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      className="flex h-8 w-8 items-center justify-center rounded-full border border-paper-edge bg-paper-card text-lg leading-none text-muted transition-colors hover:text-ink"
+    >
+      {children}
+    </button>
   );
 }

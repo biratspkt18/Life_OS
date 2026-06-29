@@ -46,12 +46,12 @@ export function useTodayTasks(now: Date): Task[] {
 }
 
 /**
- * Today's merged list — Daybook tasks + live Google Calendar events — straight
- * from the server (`/api/today`), which also reconciles deletions made in
- * Google. Revalidates on focus and on a short interval so changes show up.
+ * A given day's merged list — Daybook tasks + live Google Calendar events —
+ * straight from the server (`/api/today`), which also reconciles deletions made
+ * in Google. Revalidates on focus and on a short interval so changes show up.
  */
-export function useTodayItems(now: Date): TodayItem[] {
-  const start = startOfDay(now);
+export function useDayItems(day: Date): TodayItem[] {
+  const start = startOfDay(day);
   const end = addDays(start, 1);
   const key = `/api/today?start=${start.toISOString()}&end=${end.toISOString()}`;
   const { data } = useSWR<TodayItem[]>(key, fetcher, {
@@ -60,6 +60,18 @@ export function useTodayItems(now: Date): TodayItem[] {
     fallbackData: [],
   });
   return data ?? [];
+}
+
+/** Inbox: captured tasks with no scheduled time yet (and not completed). */
+export function useInboxTasks(): Task[] {
+  const all = useAllTasks();
+  return useMemo(
+    () =>
+      all
+        .filter((t) => !t.scheduledStart && !t.completed)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [all],
+  );
 }
 
 /** Undone past tasks the reschedule loop collects: past start, not completed. */

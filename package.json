@@ -11,6 +11,8 @@
     "worker": "tsx watch worker/scheduler.ts",
     "db:push": "drizzle-kit push",
     "clear-tasks": "tsx scripts/clear-tasks.mts",
+    "seed-loose-ends": "tsx scripts/seed-loose-ends.mts",
+    "seed-today": "tsx scripts/seed-today.mts",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/brain.test.mts"
   },

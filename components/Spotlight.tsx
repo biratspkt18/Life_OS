@@ -1,6 +1,6 @@
 import type { TodayItem } from "../lib/types";
 import { setCompleted } from "../lib/tasks";
-import { durationLabel, timeLabel } from "../lib/dates";
+import { durationLabel, minutesBetween, timeLabel } from "../lib/dates";
 import { Checkbox } from "./Checkbox";
 import { CalendarIcon } from "./icons";
 
@@ -17,6 +17,11 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
       : null;
   const isNow = !!(start && end && start <= now && now < end);
   const isGoogle = item.source === "google";
+
+  // Live progress for the block in progress: elapsed fraction + minutes left.
+  const total = start && end ? minutesBetween(start, end) : 0;
+  const minsLeft = isNow && end ? Math.max(0, minutesBetween(now, end)) : 0;
+  const progressPct = isNow && total > 0 ? Math.min(100, Math.max(0, ((total - minsLeft) / total) * 100)) : 0;
 
   return (
     <div className="surface mb-6 animate-fade-up border-l-[3px] border-l-accent bg-paper-card p-5 shadow-spotlight">
@@ -68,6 +73,22 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
               </>
             )}
           </p>
+
+          {isNow && end && (
+            <div className="mt-3.5">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-paper-edge">
+                <div
+                  className="h-full rounded-full bg-accent transition-all duration-500"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <p className="mt-1.5 text-xs text-muted">
+                about <span className="font-medium text-ink">{minsLeft} min left</span>
+                <span className="mx-1.5 text-muted-soft">—</span>
+                ends {timeLabel(end)}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

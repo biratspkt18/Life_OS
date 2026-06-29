@@ -1,24 +1,37 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import useSWR from "swr";
 import { useNow } from "../hooks/useNow";
-import { usePastUndoneTasks, useSettings } from "../hooks/useDb";
+import { useInboxTasks, usePastUndoneTasks } from "../hooks/useDb";
 import { TodayView } from "../views/TodayView";
+import { InboxView } from "../views/InboxView";
+import { LooseEndsView } from "../views/LooseEndsView";
 import { SettingsView } from "../views/SettingsView";
-import { Capture } from "./Capture";
-import { RescheduleLoop } from "./RescheduleLoop";
-import { ConnectPrompt } from "./ConnectPrompt";
-import { CalendarIcon, SettingsIcon } from "./icons";
+import { Capture, openCapture } from "./Capture";
+import { RescheduleHost } from "./RescheduleModal";
+import { InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, SunIcon } from "./icons";
 
-type View = "today" | "settings";
+type View = "today" | "inbox" | "loose" | "settings";
+
+type IconType = ComponentType<{ className?: string }>;
+
+const NAV: { key: View; label: string; Icon: IconType }[] = [
+  { key: "today", label: "Today", Icon: SunIcon },
+  { key: "inbox", label: "Inbox", Icon: InboxIcon },
+  { key: "loose", label: "Loose ends", Icon: LooseEndsIcon },
+  { key: "settings", label: "Settings", Icon: SettingsIcon },
+];
 
 export default function Shell() {
   const now = useNow();
-  const settings = useSettings();
   const [view, setView] = useState<View>("today");
-  const [loopDismissed, setLoopDismissed] = useState(false);
 
-  const pastUndone = usePastUndoneTasks(now);
-  const showLoop = !loopDismissed && pastUndone.length > 0;
+  const inbox = useInboxTasks();
+  const loose = usePastUndoneTasks(now);
+  const badges: Partial<Record<View, number>> = {
+    inbox: inbox.length,
+    loose: loose.length,
+  };
 
   // Register the service worker so the app is installable (and ready for push).
   useEffect(() => {
@@ -27,85 +40,174 @@ export default function Shell() {
     }
   }, []);
 
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
-  }
-
   return (
     <div className="paper-grain relative min-h-screen">
-      {showLoop && (
-        <RescheduleLoop
-          tasks={pastUndone}
-          settings={settings}
-          now={now}
-          onDismiss={() => setLoopDismissed(true)}
-        />
-      )}
+      {/* Desktop sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-paper-edge bg-paper-deep/40 px-4 py-6 md:flex">
+        <div className="mb-6 flex items-center gap-2 px-2">
+          <span className="font-display text-xl font-extrabold tracking-tight text-ink">
+            Daybook
+          </span>
+          <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-accent" />
+        </div>
 
-      <div className="relative z-10 mx-auto max-w-2xl px-4 pb-32 pt-6 sm:pt-8">
-        <nav className="mb-6 flex items-center justify-between">
-          <span className="text-lg font-bold tracking-tight text-ink">Daybook</span>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-full border border-paper-edge bg-paper-card p-1">
-              <NavTab active={view === "today"} onClick={() => setView("today")} label="Today">
-                <CalendarIcon className="h-4 w-4" />
-              </NavTab>
-              <NavTab
-                active={view === "settings"}
-                onClick={() => setView("settings")}
-                label="Settings"
-              >
-                <SettingsIcon className="h-4 w-4" />
-              </NavTab>
-            </div>
-            <button
-              onClick={logout}
-              className="rounded-full px-3 py-1.5 text-sm font-medium text-muted hover:text-ink"
-            >
-              Sign out
-            </button>
-          </div>
+        <button
+          type="button"
+          onClick={() => openCapture()}
+          className="mb-5 flex items-center justify-between rounded-2xl border border-paper-edge bg-paper-card px-3.5 py-2.5 text-sm font-medium text-ink shadow-card transition-colors hover:border-accent/40"
+        >
+          <span className="flex items-center gap-2">
+            <PlusIcon className="h-4 w-4 text-accent" /> Jot a thought
+          </span>
+          <kbd className="rounded bg-paper-edge px-1.5 py-0.5 text-[0.65rem] font-semibold text-muted">
+            n
+          </kbd>
+        </button>
+
+        <nav className="flex flex-col gap-1">
+          {NAV.map((item) => (
+            <NavItem
+              key={item.key}
+              active={view === item.key}
+              label={item.label}
+              badge={badges[item.key]}
+              onClick={() => setView(item.key)}
+              Icon={item.Icon}
+            />
+          ))}
         </nav>
 
-        <main>
-          {view === "today" && (
-            <>
-              <ConnectPrompt />
-              <TodayView now={now} />
-            </>
-          )}
+        <div className="mt-auto px-2">
+          <FooterStatus onOpenSettings={() => setView("settings")} />
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <div className="relative z-10 md:pl-60">
+        <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:pb-16 md:pt-10">
+          {view === "today" && <TodayView now={now} />}
+          {view === "inbox" && <InboxView now={now} />}
+          {view === "loose" && <LooseEndsView now={now} />}
           {view === "settings" && <SettingsView />}
         </main>
       </div>
 
+      {/* Mobile bottom tab bar */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-paper-edge bg-paper-card/95 backdrop-blur md:hidden">
+        {NAV.map((item) => (
+          <BottomTab
+            key={item.key}
+            active={view === item.key}
+            label={item.label}
+            badge={badges[item.key]}
+            onClick={() => setView(item.key)}
+            Icon={item.Icon}
+          />
+        ))}
+      </nav>
+
       <Capture now={now} />
+      <RescheduleHost now={now} />
     </div>
   );
 }
 
-function NavTab({
+function NavItem({
   active,
-  onClick,
   label,
-  children,
+  badge,
+  onClick,
+  Icon,
 }: {
   active: boolean;
-  onClick: () => void;
   label: string;
-  children: React.ReactNode;
+  badge?: number;
+  onClick: () => void;
+  Icon: IconType;
 }) {
   return (
     <button
       onClick={onClick}
-      aria-pressed={active}
+      aria-current={active ? "page" : undefined}
       className={[
-        "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors duration-150",
-        active ? "bg-accent text-paper" : "text-muted hover:text-ink",
+        "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+        active ? "bg-accent text-white shadow-accent" : "text-muted hover:bg-paper-edge/60 hover:text-ink",
       ].join(" ")}
     >
-      {children}
-      <span>{label}</span>
+      <Icon className="h-[1.05rem] w-[1.05rem]" />
+      <span className="flex-1 text-left">{label}</span>
+      {badge ? (
+        <span
+          className={[
+            "min-w-5 rounded-full px-1.5 py-0.5 text-center text-[0.7rem] font-semibold",
+            active ? "bg-white/25 text-white" : "bg-gold text-ink",
+          ].join(" ")}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function BottomTab({
+  active,
+  label,
+  badge,
+  onClick,
+  Icon,
+}: {
+  active: boolean;
+  label: string;
+  badge?: number;
+  onClick: () => void;
+  Icon: IconType;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={[
+        "relative flex flex-1 flex-col items-center gap-1 py-2.5 text-[0.65rem] font-medium transition-colors",
+        active ? "text-accent" : "text-muted",
+      ].join(" ")}
+    >
+      <span className="relative">
+        <Icon className="h-5 w-5" />
+        {badge ? (
+          <span className="absolute -right-2 -top-1.5 min-w-4 rounded-full bg-gold px-1 text-center text-[0.6rem] font-semibold text-ink">
+            {badge}
+          </span>
+        ) : null}
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function FooterStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { data } = useSWR<{ connected: boolean; email: string | null }>(
+    "/api/google/status",
+    (url: string) => fetch(url).then((r) => r.json()),
+  );
+  const [pushOn, setPushOn] = useState(false);
+  useEffect(() => {
+    setPushOn(typeof Notification !== "undefined" && Notification.permission === "granted");
+  }, []);
+
+  return (
+    <button
+      onClick={onOpenSettings}
+      className="flex w-full flex-col gap-1.5 rounded-xl py-1 text-left text-xs text-muted hover:text-ink"
+    >
+      <span className="flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${data?.connected ? "bg-sage" : "bg-muted-soft"}`} />
+        {data?.connected ? "Google Calendar · synced" : "Connect Google Calendar"}
+      </span>
+      <span className="flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${pushOn ? "bg-accent" : "bg-muted-soft"}`} />
+        {pushOn ? "Push reminders on" : "Push reminders off"}
+      </span>
     </button>
   );
 }

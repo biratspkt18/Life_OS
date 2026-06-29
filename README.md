@@ -22,6 +22,9 @@ reminder scheduler.
 - **Push reminders.** A ping a few minutes before each task, plus a morning
   summary (web-push; works on desktop and installed mobile PWAs).
 - **Reschedule loop.** Past-due tasks are gently collected for one-tap re-homing.
+- **Loose ends.** A task whose time slips by unchecked drops out of the Today
+  timeline and gathers in a calm **Loose ends** section, each with one-tap
+  re-homing (mark done / push to tomorrow / pick a day / drop).
 - **Per-weekday schedule shape.** Each day gets its own working window + a
   "prime" focus block, which the scheduling brain respects.
 
@@ -183,6 +186,8 @@ npm run worker       # run only the reminder worker
 npm run db:push      # apply the Drizzle schema to the SQLite file
 npm run typecheck    # tsc --noEmit
 npm test             # scheduling-brain test suite
+npm run clear-tasks      # wipe every task (see below)
+npm run seed-loose-ends  # add past, unchecked tasks for testing (see below)
 ```
 
 ### Clear all tasks
@@ -198,6 +203,20 @@ npm run clear-tasks -- --yes # skip the confirmation prompt
 It uses the app's own delete path, so any tasks linked to Google Calendar have
 their events removed too (when connected). Works whether or not the dev server is
 running.
+
+### Seed loose ends (for testing)
+
+Insert past, unchecked tasks so you can see the **Loose ends** section (and the
+login reschedule loop) without waiting for real tasks to slip by:
+
+```bash
+npm run seed-loose-ends              # a hand-picked set (earlier today → a few days ago)
+npm run seed-loose-ends -- --count 12 # spread N generated tasks across the last week
+```
+
+It writes straight to SQLite (no Google Calendar events are created), so it works
+offline and won't touch a connected calendar. Remove them with `npm run
+clear-tasks`.
 
 ---
 
@@ -274,7 +293,7 @@ running.
 ```
 app/             layout · page (Shell) · login · api/* route handlers
                  (api: tasks · today · settings · auth · google · push)
-components/       Capture · Spotlight · TaskRow · RescheduleLoop ·
+components/       Capture · Spotlight · TaskRow · RescheduleLoop · LooseEnds ·
                  ConnectPanel · ConnectPrompt · pickers · icons · Shell
 views/            TodayView · SettingsView
 hooks/            useNow · useDb (SWR-backed)
@@ -284,6 +303,6 @@ lib/
   server/
     db/{schema,index} · auth · settings · tasks · google · calendar · today · push
 worker/scheduler.ts             cron: per-task ping + morning summary
-scripts/          brain.test.mts · clear-tasks.mts
+scripts/          brain.test.mts · clear-tasks.mts · seed-loose-ends.mts
 public/sw.js · manifest.webmanifest
 ```

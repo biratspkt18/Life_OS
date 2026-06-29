@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSettings } from "../hooks/useDb";
+import { useAllTasks, useSettings } from "../hooks/useDb";
 import { createTask } from "../lib/tasks";
 import type { Importance } from "../lib/types";
 import { addDays, atTime, dayLabel, durationLabel, startOfDay } from "../lib/dates";
@@ -12,8 +12,16 @@ function defaultDay(now: Date): Date {
   return addDays(startOfDay(now), 1);
 }
 
+const CAPTURE_EVENT = "daybook:capture";
+
+/** Open the capture sheet from anywhere (e.g. the sidebar "Jot a thought"). */
+export function openCapture(opts?: { inbox?: boolean }) {
+  window.dispatchEvent(new CustomEvent(CAPTURE_EVENT, { detail: opts ?? {} }));
+}
+
 export function Capture({ now }: { now: Date }) {
   const settings = useSettings();
+  const allTasks = useAllTasks();
 
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -21,8 +29,21 @@ export function Capture({ now }: { now: Date }) {
   const [importance, setImportance] = useState<Importance>("normal");
   const [day, setDay] = useState<Date>(() => defaultDay(now));
   const [time, setTime] = useState<string>(DEFAULT_TIME);
+  // When true, capture goes to the Inbox with no scheduled time yet.
+  const [noTime, setNoTime] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function openSheet(inbox = false) {
+    setTitle("");
+    setDuration(settings.defaultDurationMinutes);
+    setImportance("normal");
+    setDay(defaultDay(now));
+    setTime(DEFAULT_TIME);
+    setNoTime(inbox);
+    setOpen(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
 
   // Keyboard shortcut: "n" opens capture from anywhere (brief §5A).
   useEffect(() => {
@@ -42,15 +63,15 @@ export function Capture({ now }: { now: Date }) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function openSheet() {
-    setTitle("");
-    setDuration(settings.defaultDurationMinutes);
-    setImportance("normal");
-    setDay(defaultDay(now));
-    setTime(DEFAULT_TIME);
-    setOpen(true);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }
+  // External trigger (sidebar / Inbox "jot another thought").
+  useEffect(() => {
+    function onOpen(e: Event) {
+      const inbox = !!(e as CustomEvent<{ inbox?: boolean }>).detail?.inbox;
+      openSheet(inbox);
+    }
+    window.addEventListener(CAPTURE_EVENT, onOpen);
+    return () => window.removeEventListener(CAPTURE_EVENT, onOpen);
+  });
 
   function close() {
     setOpen(false);
@@ -59,27 +80,41 @@ export function Capture({ now }: { now: Date }) {
   const today = useMemo(() => startOfDay(now), [now]);
   const start = useMemo(() => atTime(day, time), [day, time]);
 
+  // Tasks can't overlap — flag a clash with an existing scheduled, undone task.
+  const conflict = useMemo(() => {
+    if (noTime) return null;
+    const end = start.getTime() + duration * 60_000;
+    return (
+      allTasks.find((t) => {
+        if (!t.scheduledStart || t.completed) return false;
+        const s = new Date(t.scheduledStart).getTime();
+        const e = s + t.durationMinutes * 60_000;
+        return s < end && start.getTime() < e;
+      }) ?? null
+    );
+  }, [allTasks, start, duration, noTime]);
+
   async function confirm() {
     const title_ = title.trim();
-    if (!title_) return;
+    if (!title_ || conflict) return;
     await createTask({
       title: title_,
       durationMinutes: duration,
       importance,
-      scheduledStart: start,
+      scheduledStart: noTime ? null : start,
     });
     close();
   }
 
   return (
     <>
-      {/* Always-available capture button, fixed within reach (brief §5A). */}
+      {/* Mobile capture button (desktop uses the sidebar "Jot a thought"). */}
       {!open && (
         <button
           type="button"
-          onClick={openSheet}
+          onClick={() => openSheet()}
           aria-label="Jot a thought (n)"
-          className="fixed bottom-6 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-paper shadow-lift transition-transform duration-150 hover:bg-accent-soft active:scale-95"
+          className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lift transition-transform duration-150 hover:bg-accent-soft active:scale-95 md:hidden"
         >
           <PlusIcon className="h-6 w-6" />
         </button>
@@ -122,23 +157,43 @@ export function Capture({ now }: { now: Date }) {
               </div>
 
               <div>
-                <FieldLabel>When?</FieldLabel>
-                {/* Date first, then time. Defaults to tomorrow at 2:00 PM. */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <DayPickerButton
-                    value={day}
-                    min={today}
-                    label={dayLabel(day)}
-                    onSelect={(d) => setDay(startOfDay(d))}
-                  />
-                  <input
-                    type="time"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value || DEFAULT_TIME)}
-                    className="rounded-xl border border-paper-edge bg-paper-card px-3 py-2 text-base font-medium tabular-nums text-ink outline-none focus:border-accent/40 [color-scheme:light]"
-                    aria-label="Time"
-                  />
+                <div className="mb-2 flex items-center justify-between">
+                  <FieldLabel>When?</FieldLabel>
+                  <button
+                    type="button"
+                    onClick={() => setNoTime((v) => !v)}
+                    className="text-xs font-medium text-accent hover:text-accent-soft"
+                  >
+                    {noTime ? "Pick a time instead" : "No time — add to Inbox"}
+                  </button>
                 </div>
+                {noTime ? (
+                  <p className="rounded-xl bg-accent-wash px-3.5 py-2.5 text-sm text-ink">
+                    Saved to your Inbox — no rush. Schedule it whenever you’re ready.
+                  </p>
+                ) : (
+                  /* Date first, then time. Defaults to tomorrow at 2:00 PM. */
+                  <div className="flex flex-wrap items-center gap-2">
+                    <DayPickerButton
+                      value={day}
+                      min={today}
+                      label={dayLabel(day)}
+                      onSelect={(d) => setDay(startOfDay(d))}
+                    />
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={(e) => setTime(e.target.value || DEFAULT_TIME)}
+                      className="rounded-xl border border-paper-edge bg-paper-card px-3 py-2 text-base font-medium tabular-nums text-ink outline-none focus:border-accent/40 [color-scheme:light]"
+                      aria-label="Time"
+                    />
+                  </div>
+                )}
+                {conflict && (
+                  <p className="mt-2 text-xs font-medium text-accent">
+                    That overlaps “{conflict.title}” — pick another time.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -148,8 +203,12 @@ export function Capture({ now }: { now: Date }) {
                 <button onClick={close} className="btn-ghost">
                   Cancel
                 </button>
-                <button onClick={confirm} disabled={!title.trim()} className="btn-primary">
-                  Schedule it
+                <button
+                  onClick={confirm}
+                  disabled={!title.trim() || !!conflict}
+                  className="btn-primary"
+                >
+                  {noTime ? "Add to Inbox" : "Schedule it"}
                 </button>
               </div>
             </div>
