@@ -21,7 +21,7 @@ function taskToItem(t: Row): TodayItem {
     importance: t.importance as Importance,
     completed: t.completed,
     allDay: false,
-    source: "daybook",
+    source: "lifeos",
   };
 }
 
@@ -32,10 +32,10 @@ function byStart(a: TodayItem, b: TodayItem): number {
 }
 
 /**
- * The merged Today list: Daybook tasks scheduled for the day **plus** events
+ * The merged Today list: Life OS tasks scheduled for the day **plus** events
  * read live from Google Calendar that weren't created here.
  *
- * It also performs two-way deletion sync: if a Daybook task's calendar event has
+ * It also performs two-way deletion sync: if a Life OS task's calendar event has
  * been deleted in Google, the task is removed from the database here so it
  * disappears from the app too. To stay safe, this only runs when the Google
  * fetch actually succeeds (so an outage can never delete your tasks), and only
@@ -94,9 +94,9 @@ export async function getTodayItems(
 
   const appItems = tasksInDay().map(taskToItem);
 
-  // External Google events for the day (not created by Daybook).
+  // External Google events for the day (not created by Life OS).
   const externalItems: TodayItem[] = events
-    .filter((e) => !e.daybookId && e.start)
+    .filter((e) => !e.lifeosId && e.start)
     .filter((e) => {
       const s = new Date(e.start!);
       return s >= dayStart && s < dayEnd;

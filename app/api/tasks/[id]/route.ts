@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteTask, patchTask, type TaskPatch } from "@/lib/server/tasks";
+import { ConflictError, deleteTask, patchTask, type TaskPatch } from "@/lib/server/tasks";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +10,16 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as TaskPatch;
-  const task = await patchTask(id, body);
-  if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json(task);
+  try {
+    const task = await patchTask(id, body);
+    if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+    return NextResponse.json(task);
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return NextResponse.json({ error: err.message, conflict: err.conflict }, { status: 409 });
+    }
+    throw err;
+  }
 }
 
 export async function DELETE(

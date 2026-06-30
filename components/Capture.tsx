@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAllTasks, useSettings } from "../hooks/useDb";
-import { createTask } from "../lib/tasks";
+import { useDayItems, useSettings } from "../hooks/useDb";
+import { ConflictError, createTask } from "../lib/tasks";
 import type { Importance } from "../lib/types";
 import { addDays, atTime, dayLabel, durationLabel, startOfDay } from "../lib/dates";
 import { DayPickerButton, DurationPicker, ImportancePicker } from "./pickers";
@@ -12,7 +12,7 @@ function defaultDay(now: Date): Date {
   return addDays(startOfDay(now), 1);
 }
 
-const CAPTURE_EVENT = "daybook:capture";
+const CAPTURE_EVENT = "lifeos:capture";
 
 /** Open the capture sheet from anywhere (e.g. the sidebar "Jot a thought"). */
 export function openCapture(opts?: { inbox?: boolean }) {
@@ -21,7 +21,6 @@ export function openCapture(opts?: { inbox?: boolean }) {
 
 export function Capture({ now }: { now: Date }) {
   const settings = useSettings();
-  const allTasks = useAllTasks();
 
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -29,8 +28,11 @@ export function Capture({ now }: { now: Date }) {
   const [importance, setImportance] = useState<Importance>("normal");
   const [day, setDay] = useState<Date>(() => defaultDay(now));
   const [time, setTime] = useState<string>(DEFAULT_TIME);
-  // When true, capture goes to the Inbox with no scheduled time yet.
+  // When true, capture goes to the To-do list with no scheduled time yet.
   const [noTime, setNoTime] = useState(false);
+  // To-do dates (only used when noTime). null = not set.
+  const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [preferredDate, setPreferredDate] = useState<Date | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -41,6 +43,9 @@ export function Capture({ now }: { now: Date }) {
     setDay(defaultDay(now));
     setTime(DEFAULT_TIME);
     setNoTime(inbox);
+    setDueDate(null);
+    setPreferredDate(null);
+    setServerError(null);
     setOpen(true);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
@@ -80,30 +85,45 @@ export function Capture({ now }: { now: Date }) {
   const today = useMemo(() => startOfDay(now), [now]);
   const start = useMemo(() => atTime(day, time), [day, time]);
 
-  // Tasks can't overlap — flag a clash with an existing scheduled, undone task.
+  // The chosen day's existing items (Life OS tasks + Google events).
+  const dayItems = useDayItems(day);
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  // Nothing may overlap — flag a clash with an existing task OR calendar event.
   const conflict = useMemo(() => {
     if (noTime) return null;
     const end = start.getTime() + duration * 60_000;
     return (
-      allTasks.find((t) => {
-        if (!t.scheduledStart || t.completed) return false;
-        const s = new Date(t.scheduledStart).getTime();
-        const e = s + t.durationMinutes * 60_000;
+      dayItems.find((it) => {
+        if (it.allDay || !it.start) return false;
+        const s = new Date(it.start).getTime();
+        const e = s + (it.durationMinutes ?? 30) * 60_000;
         return s < end && start.getTime() < e;
       }) ?? null
     );
-  }, [allTasks, start, duration, noTime]);
+  }, [dayItems, start, duration, noTime]);
 
   async function confirm() {
     const title_ = title.trim();
     if (!title_ || conflict) return;
-    await createTask({
-      title: title_,
-      durationMinutes: duration,
-      importance,
-      scheduledStart: noTime ? null : start,
-    });
-    close();
+    setServerError(null);
+    try {
+      await createTask({
+        title: title_,
+        durationMinutes: duration,
+        importance,
+        scheduledStart: noTime ? null : start,
+        dueDate: noTime ? dueDate : null,
+        preferredDate: noTime ? preferredDate : null,
+      });
+      close();
+    } catch (err) {
+      setServerError(
+        err instanceof ConflictError
+          ? `That overlaps “${err.conflict.title}” — pick another time.`
+          : "Couldn't save — please try again.",
+      );
+    }
   }
 
   return (
@@ -164,13 +184,30 @@ export function Capture({ now }: { now: Date }) {
                     onClick={() => setNoTime((v) => !v)}
                     className="text-xs font-medium text-accent hover:text-accent-soft"
                   >
-                    {noTime ? "Pick a time instead" : "No time — add to Inbox"}
+                    {noTime ? "Schedule a time instead" : "No time yet — add to To-do"}
                   </button>
                 </div>
                 {noTime ? (
-                  <p className="rounded-xl bg-accent-wash px-3.5 py-2.5 text-sm text-ink">
-                    Saved to your Inbox — no rush. Schedule it whenever you’re ready.
-                  </p>
+                  /* To-do: optional due date + preferred date; schedule it later. */
+                  <div className="space-y-3">
+                    <p className="rounded-xl bg-accent-wash px-3.5 py-2.5 text-sm text-ink">
+                      Added to your To-do list — schedule it onto a day whenever you’re ready.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <OptionalDate
+                        heading="Due by"
+                        value={dueDate}
+                        min={today}
+                        onSelect={setDueDate}
+                      />
+                      <OptionalDate
+                        heading="Prefer to do"
+                        value={preferredDate}
+                        min={today}
+                        onSelect={setPreferredDate}
+                      />
+                    </div>
+                  </div>
                 ) : (
                   /* Date first, then time. Defaults to tomorrow at 2:00 PM. */
                   <div className="flex flex-wrap items-center gap-2">
@@ -193,6 +230,9 @@ export function Capture({ now }: { now: Date }) {
                   <p className="mt-2 text-xs font-medium text-accent">
                     That overlaps “{conflict.title}” — pick another time.
                   </p>
+                )}
+                {serverError && !conflict && (
+                  <p className="mt-2 text-xs font-medium text-accent">{serverError}</p>
                 )}
               </div>
             </div>
@@ -221,4 +261,43 @@ export function Capture({ now }: { now: Date }) {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">{children}</p>;
+}
+
+/** A labeled, clearable date picker for the optional to-do dates. */
+function OptionalDate({
+  heading,
+  value,
+  min,
+  onSelect,
+}: {
+  heading: string;
+  value: Date | null;
+  min: Date;
+  onSelect: (d: Date | null) => void;
+}) {
+  return (
+    <div>
+      <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted">
+        {heading}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <DayPickerButton
+          value={value ?? min}
+          min={min}
+          label={value ? dayLabel(value) : "Pick a date"}
+          onSelect={(d) => onSelect(startOfDay(d))}
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onSelect(null)}
+            aria-label={`Clear ${heading}`}
+            className="rounded-lg p-1.5 text-muted-soft transition-colors hover:text-ink"
+          >
+            <CloseIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

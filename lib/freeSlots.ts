@@ -27,11 +27,14 @@ export function findFreeSlots(opts: {
   fromDay?: Date;
   days?: number;
   excludeTaskId?: string;
+  /** External busy intervals (e.g. Google events) to also schedule around. */
+  externalBusy?: Interval[];
   stepMinutes?: number;
   maxPerDay?: number;
   limit?: number;
 }): Date[] {
   const { durationMinutes, settings, tasks, now } = opts;
+  const externalBusy = opts.externalBusy ?? [];
   const days = opts.days ?? 7;
   const step = opts.stepMinutes ?? 30;
   const maxPerDay = opts.maxPerDay ?? 4;
@@ -49,12 +52,14 @@ export function findFreeSlots(opts: {
     const winEnd = atTime(day, win.dayWindowEnd);
     if (winEnd <= winStart) continue;
 
-    const busy: Interval[] = tasks
-      .filter((t) => t.scheduledStart && !t.completed && t.id !== opts.excludeTaskId)
+    const taskBusy: Interval[] = tasks
+      .filter((t) => t.scheduledStart && t.id !== opts.excludeTaskId)
       .map((t) => {
         const s = new Date(t.scheduledStart!);
         return { start: s, end: addMinutes(s, t.durationMinutes) };
-      })
+      });
+
+    const busy: Interval[] = [...taskBusy, ...externalBusy]
       .filter((iv) => iv.end > winStart && iv.start < winEnd)
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 

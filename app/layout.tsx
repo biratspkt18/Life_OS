@@ -2,11 +2,11 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Daybook",
+  title: "Life OS",
   description:
     "A calm, scheduling-first task manager. You jot a thought; it proposes a slot; you decide.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "Daybook", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "Life OS", statusBarStyle: "default" },
   icons: { icon: "/favicon.svg" },
 };
 

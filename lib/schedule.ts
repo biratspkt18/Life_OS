@@ -55,9 +55,9 @@ export interface ProposalInput {
   earliestDay?: Date;
 }
 
-/** A scheduled, incomplete task as a busy interval. */
+/** A scheduled task as a busy interval (done or not — it still holds the time). */
 function taskInterval(t: Task): Interval | null {
-  if (!t.scheduledStart || t.completed) return null;
+  if (!t.scheduledStart) return null;
   const start = new Date(t.scheduledStart);
   return { start, end: endOf(start, t.durationMinutes) };
 }
@@ -257,7 +257,7 @@ function tryBump(
   };
   const newRank = IMPORTANCE_RANK[newImportance];
 
-  // Candidate occupants: incomplete Daybook tasks scheduled inside prime on
+  // Candidate occupants: incomplete Life OS tasks scheduled inside prime on
   // this day, strictly lower importance, sorted lowest-importance-first.
   const occupants = tasks
     .filter((t) => {

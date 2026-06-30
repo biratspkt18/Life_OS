@@ -20,6 +20,10 @@ export interface Task {
   importance: Importance;
   /** ISO datetime, or null = captured but not yet placed on the day. */
   scheduledStart: string | null;
+  /** To-do deadline (ISO, date-only at start of day), or null for no deadline. */
+  dueDate: string | null;
+  /** Preferred completion date (ISO, date-only), or null. Guides scheduling. */
+  preferredDate: string | null;
   /** Set once Google Calendar sync exists (out of scope for the local-only build). */
   googleEventId: string | null;
   completed: boolean;
@@ -30,7 +34,7 @@ export interface Task {
 }
 
 /**
- * One row in the Today view. Either a Daybook task (`source: "daybook"`, has a
+ * One row in the Today view. Either a Life OS task (`source: "lifeos"`, has a
  * checkbox / importance / completion) or an event read straight from Google
  * Calendar that wasn't created here (`source: "google"`, read-only).
  */
@@ -43,7 +47,7 @@ export interface TodayItem {
   importance: Importance | null;
   completed: boolean;
   allDay: boolean;
-  source: "daybook" | "google";
+  source: "lifeos" | "google";
 }
 
 /** The schedulable shape of a single day. */

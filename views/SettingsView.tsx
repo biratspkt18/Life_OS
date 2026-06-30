@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useSettings } from "../hooks/useDb";
 import { saveSettings } from "../lib/tasks";
 import { parseHHmm } from "../lib/dates";
@@ -44,7 +45,7 @@ export function SettingsView() {
       <div className="space-y-5">
         <Group
           title="Your week"
-          hint="Set the schedulable hours and prime block for each day. Turn a day off to keep it free."
+          hint="Tap a day to set its schedulable hours and prime block. Turn a day off to keep it free."
         >
           <div className="space-y-3">
             {WEEK.map(({ label, index }) => (
@@ -95,73 +96,125 @@ function DayRow({
   onPatch: (patch: Partial<DayWindow>) => void;
   onCopyToAll: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   const windowBad = parseHHmm(window.dayWindowEnd) <= parseHHmm(window.dayWindowStart);
   const primeBad = parseHHmm(window.primeEnd) <= parseHHmm(window.primeStart);
   const primeOutside =
     parseHHmm(window.primeStart) < parseHHmm(window.dayWindowStart) ||
     parseHHmm(window.primeEnd) > parseHHmm(window.dayWindowEnd);
+  const hasIssue = window.enabled && (windowBad || primeBad || primeOutside);
 
   return (
-    <div className="rounded-xl border border-paper-edge bg-paper-card/60 p-3.5">
-      <div className="flex items-center justify-between gap-3">
+    <div className="overflow-hidden rounded-xl border border-paper-edge bg-paper-card/60">
+      {/* Collapsed summary — tap to expand and edit this day. */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-paper-edge/30"
+      >
         <span className="text-sm font-semibold text-ink">{label}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={window.enabled}
-          onClick={() => onPatch({ enabled: !window.enabled })}
-          className="inline-flex items-center gap-2 text-xs font-medium text-muted"
-        >
-          <span
-            className={`relative h-5 w-9 rounded-full transition-colors ${
-              window.enabled ? "bg-accent" : "bg-paper-edge"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-4 w-4 rounded-full bg-paper-card shadow-sm transition-transform ${
-                window.enabled ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
+        <span className="flex items-center gap-2 text-sm">
+          {hasIssue && (
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Needs attention" />
+          )}
+          <span className={window.enabled ? "tabular-nums text-muted" : "text-muted-soft"}>
+            {window.enabled
+              ? `${clock(window.dayWindowStart)} – ${clock(window.dayWindowEnd)}`
+              : "Day off"}
           </span>
-          {window.enabled ? "Scheduled" : "Day off"}
-        </button>
-      </div>
+          <Chevron open={open} />
+        </span>
+      </button>
 
-      {window.enabled && (
-        <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-3">
-          <FieldPair
-            heading="Day window"
-            startValue={window.dayWindowStart}
-            endValue={window.dayWindowEnd}
-            onStart={(v) => onPatch({ dayWindowStart: v })}
-            onEnd={(v) => onPatch({ dayWindowEnd: v })}
-          />
-          <FieldPair
-            heading="Prime block"
-            startValue={window.primeStart}
-            endValue={window.primeEnd}
-            onStart={(v) => onPatch({ primeStart: v })}
-            onEnd={(v) => onPatch({ primeEnd: v })}
-          />
+      {open && (
+        <div className="border-t border-paper-edge px-3.5 pb-3.5 pt-3">
           <button
             type="button"
-            onClick={onCopyToAll}
-            className="btn-ghost px-2.5 py-1.5 text-xs"
-            title="Apply these hours to every day"
+            role="switch"
+            aria-checked={window.enabled}
+            onClick={() => onPatch({ enabled: !window.enabled })}
+            className="inline-flex items-center gap-2 text-xs font-medium text-muted"
           >
-            Copy to all days
+            <span
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                window.enabled ? "bg-accent" : "bg-paper-edge"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-paper-card shadow-sm transition-transform ${
+                  window.enabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+            {window.enabled ? "Scheduled" : "Day off"}
           </button>
+
+          {window.enabled && (
+            <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-3">
+              <FieldPair
+                heading="Day window"
+                startValue={window.dayWindowStart}
+                endValue={window.dayWindowEnd}
+                onStart={(v) => onPatch({ dayWindowStart: v })}
+                onEnd={(v) => onPatch({ dayWindowEnd: v })}
+              />
+              <FieldPair
+                heading="Prime block"
+                startValue={window.primeStart}
+                endValue={window.primeEnd}
+                onStart={(v) => onPatch({ primeStart: v })}
+                onEnd={(v) => onPatch({ primeEnd: v })}
+              />
+              <button
+                type="button"
+                onClick={onCopyToAll}
+                className="btn-ghost px-2.5 py-1.5 text-xs"
+                title="Apply these hours to every day"
+              >
+                Copy to all days
+              </button>
+            </div>
+          )}
+
+          {window.enabled && windowBad && <Warn>End time should be after the start time.</Warn>}
+          {window.enabled && !windowBad && primeBad && (
+            <Warn>Prime end should be after its start.</Warn>
+          )}
+          {window.enabled && !windowBad && !primeBad && primeOutside && (
+            <Warn>Keep the prime block inside the day window.</Warn>
+          )}
         </div>
       )}
-
-      {window.enabled && windowBad && <Warn>End time should be after the start time.</Warn>}
-      {window.enabled && !windowBad && primeBad && (
-        <Warn>Prime end should be after its start.</Warn>
-      )}
-      {window.enabled && !windowBad && !primeBad && primeOutside && (
-        <Warn>Keep the prime block inside the day window.</Warn>
-      )}
     </div>
+  );
+}
+
+/** "08:00" → "8:00 AM" for the collapsed day summary. */
+function clock(hhmm: string): string {
+  const mins = parseHHmm(hhmm);
+  let h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ap = h < 12 ? "AM" : "PM";
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, "0")} ${ap}`;
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-4 w-4 text-muted-soft transition-transform ${open ? "rotate-180" : ""}`}
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   );
 }
 

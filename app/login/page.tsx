@@ -29,7 +29,7 @@ export default function LoginPage() {
         onSubmit={submit}
         className="surface relative z-10 w-full max-w-sm animate-scale-in p-6"
       >
-        <h1 className="text-xl font-bold tracking-tight text-ink">Daybook</h1>
+        <h1 className="text-xl font-bold tracking-tight text-ink">Life OS</h1>
         <p className="mb-4 mt-0.5 text-sm text-muted">Enter your passcode to continue.</p>
         <input
           type="password"

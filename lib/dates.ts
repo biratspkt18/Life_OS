@@ -74,8 +74,8 @@ export function durationLabel(minutes: number): string {
  * date picker.
  */
 export function monthGrid(month: Date): Date[][] {
-  const start = startOfWeek(startOfMonth(month));
-  const end = endOfWeek(endOfMonth(month));
+  const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
+  const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });
   const days = eachDayOfInterval({ start, end });
   const weeks: Date[][] = [];
   for (let i = 0; i < days.length; i += 7) {

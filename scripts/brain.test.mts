@@ -24,6 +24,8 @@ function mkTask(p: Partial<Task>): Task {
     durationMinutes: p.durationMinutes ?? 30,
     importance: p.importance ?? "normal",
     scheduledStart: p.scheduledStart ?? null,
+    dueDate: p.dueDate ?? null,
+    preferredDate: p.preferredDate ?? null,
     googleEventId: null,
     completed: p.completed ?? false,
     completedAt: null,

@@ -10,7 +10,7 @@ interface GoogleStatus {
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-const DISMISS_KEY = "daybook:google-prompt-dismissed";
+const DISMISS_KEY = "lifeos:google-prompt-dismissed";
 
 /**
  * Proactively asks the user to connect Google Calendar so new tasks mirror to

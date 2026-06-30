@@ -171,8 +171,8 @@ export function groupDay(items: TodayItem[], now: Date): DayGroups {
     spotlight,
     upcoming: rest,
     allDay,
-    doneCount: timed.filter((t) => t.completed && t.source === "daybook").length,
-    toGoCount: live.filter((t) => t.source === "daybook").length,
+    doneCount: timed.filter((t) => t.completed && t.source === "lifeos").length,
+    toGoCount: live.filter((t) => t.source === "lifeos").length,
   };
 }
 

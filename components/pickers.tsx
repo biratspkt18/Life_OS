@@ -19,11 +19,11 @@ import {
 
 const IMPORTANCE_ORDER: Importance[] = ["high", "normal", "low"];
 
-const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
 /**
  * A calendar month grid for picking a day. Past days (before `min`) are
- * disabled — Daybook never schedules into the past. Today and the selected
+ * disabled — Life OS never schedules into the past. Today and the selected
  * day are highlighted.
  */
 export function DayCalendar({

@@ -6,7 +6,7 @@ import { CalendarIcon } from "./icons";
 
 /**
  * The "now / next" spotlight (brief §5C): the current or next upcoming block,
- * large and friendly. Big, calm, answers "what now?". Works for a Daybook task
+ * large and friendly. Big, calm, answers "what now?". Works for a Life OS task
  * (checkable) or a read-only Google Calendar event.
  */
 export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {

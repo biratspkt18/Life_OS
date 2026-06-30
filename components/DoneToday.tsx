@@ -11,7 +11,7 @@ import { CalendarIcon, CheckIcon } from "./icons";
 export function DoneToday({ items, now }: { items: TodayItem[]; now: Date }) {
   const done = items
     .filter((i) => {
-      if (i.source === "daybook") return i.completed;
+      if (i.source === "lifeos") return i.completed;
       // Google external event: count it once it has happened.
       if (i.allDay) return true;
       const start = i.start ? new Date(i.start) : null;

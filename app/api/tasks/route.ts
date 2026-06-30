@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createTask, listTasks } from "@/lib/server/tasks";
+import { ConflictError, createTask, listTasks } from "@/lib/server/tasks";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,11 +13,20 @@ export async function POST(req: Request) {
   if (!b.title || typeof b.title !== "string") {
     return NextResponse.json({ error: "title required" }, { status: 400 });
   }
-  const task = await createTask({
-    title: b.title,
-    durationMinutes: Number(b.durationMinutes) || 30,
-    importance: b.importance ?? "normal",
-    scheduledStart: b.scheduledStart ?? null,
-  });
-  return NextResponse.json(task);
+  try {
+    const task = await createTask({
+      title: b.title,
+      durationMinutes: Number(b.durationMinutes) || 30,
+      importance: b.importance ?? "normal",
+      scheduledStart: b.scheduledStart ?? null,
+      dueDate: b.dueDate ?? null,
+      preferredDate: b.preferredDate ?? null,
+    });
+    return NextResponse.json(task);
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return NextResponse.json({ error: err.message, conflict: err.conflict }, { status: 409 });
+    }
+    throw err;
+  }
 }

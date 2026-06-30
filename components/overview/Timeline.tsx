@@ -64,8 +64,8 @@ export function Timeline({
     closeTimer.current = setTimeout(() => setActiveId(null), 220);
   }
 
-  /** A daybook task that isn't done yet can be checked off or moved. */
-  const actionable = (b: Block) => b.item.source === "daybook" && !b.item.completed;
+  /** A Life OS task that isn't done yet can be checked off or moved. */
+  const actionable = (b: Block) => b.item.source === "lifeos" && !b.item.completed;
 
   function markDone(b: Block) {
     setCompleted(b.item.id, true);
@@ -85,9 +85,13 @@ export function Timeline({
       ? (minutesBetween(windowStart, now) / windowMinutes) * 100
       : null;
 
-  /** A daybook task whose time passed without being checked off. */
+  /**
+   * A Life OS task whose time has passed without being checked off — on today
+   * *or* any earlier day (so yesterday's missed tasks show hollow in the
+   * calendar too). Outlined, not filled, as a calm "this slipped" cue.
+   */
   const isUndone = (b: Block) =>
-    isToday && now > b.end && !b.item.completed && b.item.source === "daybook";
+    now > b.end && !b.item.completed && b.item.source === "lifeos";
 
   return (
     <div className="relative mb-6">
@@ -132,7 +136,7 @@ export function Timeline({
         )}
       </div>
 
-      {/* Hover/focus detail popover — interactive for unfinished daybook tasks */}
+      {/* Hover/focus detail popover — interactive for unfinished Life OS tasks */}
       {active && (
         <div
           onMouseEnter={() => show(active.item.id)}
@@ -183,6 +187,18 @@ export function Timeline({
               </button>
             </div>
           )}
+
+          {/* A done task keeps its slot; let the user log the time they actually did it. */}
+          {active.item.source === "lifeos" && active.item.completed && (
+            <div className="mt-2.5 flex items-center gap-2 border-t border-paper-edge pt-2.5">
+              <button
+                onClick={() => reschedule(active)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent-wash px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/15"
+              >
+                <ClockIcon className="h-3.5 w-3.5" /> Change time
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -216,11 +232,12 @@ export function Timeline({
   );
 }
 
-/** Segment style by state: hollow if it slipped, faded if done, else filled. */
+/** Segment style by state: hollow if it slipped, success-green if done, else filled. */
 function blockClasses(b: Block, undone: boolean): string {
   // Opaque paper fill so a stacked block never bleeds through the outline.
   if (undone) return "border-2 border-accent/70 bg-paper-card";
-  if (b.item.completed) return "bg-sage/50";
+  // Done → the app's success green (sage), at full strength so it reads clearly.
+  if (b.item.completed) return "bg-sage";
   if (b.item.source === "google") return "bg-gold/70";
   if (b.item.importance === "high") return "bg-accent";
   if (b.item.importance === "low") return "bg-accent/45";

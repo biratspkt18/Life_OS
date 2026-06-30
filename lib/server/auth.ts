@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify } from "jose";
 
 // Edge-safe: only depends on `jose` (no DB / native modules) so middleware can use it.
 
-export const SESSION_COOKIE = "daybook_session";
+export const SESSION_COOKIE = "lifeos_session";
 
 function secret(): Uint8Array {
   return new TextEncoder().encode(

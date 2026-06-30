@@ -3,9 +3,20 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import * as calendar from "./calendar";
+import { findConflict, type Conflict } from "./conflicts";
 import type { Importance, Task } from "../types";
 
 type Row = typeof tasks.$inferSelect;
+
+/** Thrown when a booking would overlap an existing task or calendar event. */
+export class ConflictError extends Error {
+  conflict: Conflict;
+  constructor(conflict: Conflict) {
+    super(`Time overlaps "${conflict.title}"`);
+    this.name = "ConflictError";
+    this.conflict = conflict;
+  }
+}
 
 function toTask(r: Row): Task {
   return {
@@ -14,6 +25,8 @@ function toTask(r: Row): Task {
     durationMinutes: r.durationMinutes,
     importance: r.importance as Importance,
     scheduledStart: r.scheduledStart,
+    dueDate: r.dueDate,
+    preferredDate: r.preferredDate,
     googleEventId: r.googleEventId,
     completed: r.completed,
     completedAt: r.completedAt,
@@ -35,16 +48,27 @@ export interface NewTaskInput {
   durationMinutes: number;
   importance: Importance;
   scheduledStart: string | null;
+  dueDate?: string | null;
+  preferredDate?: string | null;
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {
   const now = new Date().toISOString();
+
+  // Never let a new task land on top of an existing task or calendar event.
+  if (input.scheduledStart) {
+    const conflict = await findConflict(input.scheduledStart, input.durationMinutes);
+    if (conflict) throw new ConflictError(conflict);
+  }
+
   const task: Task = {
     id: randomUUID(),
     title: input.title.trim(),
     durationMinutes: input.durationMinutes,
     importance: input.importance,
     scheduledStart: input.scheduledStart,
+    dueDate: input.dueDate ?? null,
+    preferredDate: input.preferredDate ?? null,
     googleEventId: null,
     completed: false,
     completedAt: null,
@@ -64,7 +88,14 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    "title" | "durationMinutes" | "importance" | "scheduledStart" | "completed" | "completedAt"
+    | "title"
+    | "durationMinutes"
+    | "importance"
+    | "scheduledStart"
+    | "dueDate"
+    | "preferredDate"
+    | "completed"
+    | "completedAt"
   >
 >;
 
@@ -89,6 +120,19 @@ export async function patchTask(id: string, patch: TaskPatch): Promise<Task | nu
     updatedAt: now,
   };
 
+  // If this change moves the task or changes its length while it stays on the
+  // calendar, make sure the new slot doesn't collide with anything. (Completing
+  // or merely renaming a task never needs this check.)
+  const durationChanged =
+    patch.durationMinutes !== undefined && patch.durationMinutes !== existing.durationMinutes;
+  // Validate whenever the slot actually moves/grows — even for a completed task
+  // (logging it at a different time must still land somewhere free). A plain
+  // complete-in-place doesn't move the slot, so it skips this.
+  if (merged.scheduledStart && (rescheduled || durationChanged)) {
+    const conflict = await findConflict(merged.scheduledStart, merged.durationMinutes, id);
+    if (conflict) throw new ConflictError(conflict);
+  }
+
   // Reconcile the calendar event, then persist the (possibly new) event id.
   const eventId = await calendar.syncEvent(merged);
   merged.googleEventId = eventId;
@@ -99,6 +143,8 @@ export async function patchTask(id: string, patch: TaskPatch): Promise<Task | nu
       durationMinutes: merged.durationMinutes,
       importance: merged.importance,
       scheduledStart: merged.scheduledStart,
+      dueDate: merged.dueDate,
+      preferredDate: merged.preferredDate,
       completed: merged.completed,
       completedAt: merged.completedAt,
       googleEventId: eventId,

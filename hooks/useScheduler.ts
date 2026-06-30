@@ -1,9 +1,10 @@
 "use client";
 import { useCallback } from "react";
-import { useAllTasks, useSettings } from "./useDb";
+import { useAllTasks, useExternalBusy, useSettings } from "./useDb";
 import { proposeSlot } from "../lib/schedule";
 import { findFreeSlots } from "../lib/freeSlots";
 import { rescheduleTask } from "../lib/tasks";
+import { startOfDay } from "../lib/dates";
 import type { Importance } from "../lib/types";
 
 /** The minimum a task needs to be (re)scheduled by the brain. */
@@ -21,6 +22,8 @@ export interface Schedulable {
 export function useScheduler() {
   const settings = useSettings();
   const tasks = useAllTasks();
+  // Google events to schedule around, so we never propose a slot on top of one.
+  const externalBusy = useExternalBusy(startOfDay(new Date()), 30);
 
   const propose = useCallback(
     (task: Schedulable, now: Date, earliestDay?: Date) =>
@@ -29,11 +32,12 @@ export function useScheduler() {
         importance: task.importance,
         settings,
         tasks,
+        externalBusy,
         now,
         earliestDay,
         excludeTaskId: task.id,
       }),
-    [settings, tasks],
+    [settings, tasks, externalBusy],
   );
 
   const scheduleInto = useCallback(
@@ -54,11 +58,12 @@ export function useScheduler() {
         durationMinutes: task.durationMinutes,
         settings,
         tasks,
+        externalBusy,
         now,
         fromDay,
         excludeTaskId: task.id,
       }),
-    [settings, tasks],
+    [settings, tasks, externalBusy],
   );
 
   return { propose, scheduleInto, slotsFor };

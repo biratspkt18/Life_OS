@@ -6,7 +6,7 @@ import { ImportanceMark } from "./pickers";
 import { CalendarIcon } from "./icons";
 
 /**
- * One row in the day list. A Daybook task gets a checkbox (checking = the only
+ * One row in the day list. A Life OS task gets a checkbox (checking = the only
  * way to complete) and importance mark; an event pulled from Google Calendar is
  * read-only, marked with a small calendar glyph.
  */

@@ -4,8 +4,8 @@ import type { Task } from "../types";
 
 export interface CalendarEvent {
   id: string;
-  /** Our task id, if this event was created by Daybook. */
-  daybookId: string | null;
+  /** Our task id, if this event was created by Life OS. */
+  lifeosId: string | null;
   title: string;
   start: string | null; // ISO datetime, or a date string for all-day
   end: string | null;
@@ -38,7 +38,12 @@ export async function listEvents(
     .filter((e) => e.status !== "cancelled" && e.id)
     .map((e) => ({
       id: e.id!,
-      daybookId: e.extendedProperties?.private?.daybookId ?? null,
+      // Read the current key, falling back to the legacy `daybookId` so events
+      // created before the rename still link to their task.
+      lifeosId:
+        e.extendedProperties?.private?.lifeosId ??
+        e.extendedProperties?.private?.daybookId ??
+        null,
       title: e.summary ?? "(untitled)",
       start: e.start?.dateTime ?? e.start?.date ?? null,
       end: e.end?.dateTime ?? e.end?.date ?? null,
@@ -53,10 +58,10 @@ function eventBody(task: Task) {
     summary: task.title,
     start: { dateTime: start.toISOString() },
     end: { dateTime: end.toISOString() },
-    // We tag the event with our id so it's identifiable as a Daybook event.
+    // We tag the event with our id so it's identifiable as a Life OS event.
     // (No `source` field: Google rejects a source without a valid public URL,
     // which a localhost app doesn't have — "Invalid source url".)
-    extendedProperties: { private: { daybookId: task.id } },
+    extendedProperties: { private: { lifeosId: task.id } },
   };
 }
 

@@ -4,20 +4,22 @@ import useSWR from "swr";
 import { useNow } from "../hooks/useNow";
 import { useInboxTasks, usePastUndoneTasks } from "../hooks/useDb";
 import { TodayView } from "../views/TodayView";
+import { CalendarView } from "../views/CalendarView";
 import { InboxView } from "../views/InboxView";
 import { LooseEndsView } from "../views/LooseEndsView";
 import { SettingsView } from "../views/SettingsView";
 import { Capture, openCapture } from "./Capture";
 import { RescheduleHost } from "./RescheduleModal";
-import { InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, SunIcon } from "./icons";
+import { CalendarIcon, InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, SunIcon } from "./icons";
 
-type View = "today" | "inbox" | "loose" | "settings";
+type View = "today" | "calendar" | "inbox" | "loose" | "settings";
 
 type IconType = ComponentType<{ className?: string }>;
 
 const NAV: { key: View; label: string; Icon: IconType }[] = [
   { key: "today", label: "Today", Icon: SunIcon },
-  { key: "inbox", label: "Inbox", Icon: InboxIcon },
+  { key: "calendar", label: "Calendar", Icon: CalendarIcon },
+  { key: "inbox", label: "To-do", Icon: InboxIcon },
   { key: "loose", label: "Loose ends", Icon: LooseEndsIcon },
   { key: "settings", label: "Settings", Icon: SettingsIcon },
 ];
@@ -46,7 +48,7 @@ export default function Shell() {
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-paper-edge bg-paper-deep/40 px-4 py-6 md:flex">
         <div className="mb-6 flex items-center gap-2 px-2">
           <span className="font-display text-xl font-extrabold tracking-tight text-ink">
-            Daybook
+            Life OS
           </span>
           <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-accent" />
         </div>
@@ -86,6 +88,7 @@ export default function Shell() {
       <div className="relative z-10 md:pl-60">
         <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:pb-16 md:pt-10">
           {view === "today" && <TodayView now={now} />}
+          {view === "calendar" && <CalendarView now={now} />}
           {view === "inbox" && <InboxView now={now} />}
           {view === "loose" && <LooseEndsView now={now} />}
           {view === "settings" && <SettingsView />}

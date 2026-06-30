@@ -1,4 +1,4 @@
-# Daybook
+# Life OS
 
 A personal, single-user, **scheduling-first** task manager for an ADHD brain.
 
@@ -35,7 +35,7 @@ reminder scheduler.
 | Layer | Choice |
 |---|---|
 | Framework | Next.js (App Router) + React + TypeScript |
-| Database | SQLite via Drizzle ORM + better-sqlite3 (`data/daybook.db`) |
+| Database | SQLite via Drizzle ORM + better-sqlite3 (`data/lifeos.db`) |
 | Calendar | `googleapis` — OAuth2 + automatic access-token refresh |
 | Push | `web-push` (VAPID) + a custom service worker |
 | Scheduler | `node-cron` worker (`worker/scheduler.ts`), runs beside Next |
@@ -60,11 +60,11 @@ reads/writes via `/api/*`.
 ## Quick start
 
 ```bash
-git clone <your-fork-url> daybook
-cd daybook
+git clone <your-fork-url> life-os
+cd life-os
 npm install
 cp .env.example .env          # then edit .env (see Configuration below)
-npm run db:push               # create the SQLite schema in data/daybook.db
+npm run db:push               # create the SQLite schema in data/lifeos.db
 npm run dev                   # http://localhost:3000  (Next + the reminder worker)
 ```
 
@@ -89,7 +89,7 @@ so your secrets and database are never committed.
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
-- **`DB_PATH`** — where the SQLite file lives (default `data/daybook.db`).
+- **`DB_PATH`** — where the SQLite file lives (default `data/lifeos.db`).
 
 ### Optional: Google Calendar
 
@@ -257,7 +257,7 @@ clear-tasks`.
   mirror to Google Calendar (`lib/server/calendar.ts`). If Google is disconnected
   or down, the task still saves; the event just isn't created.
 - **`/api/today`** — the Today view's data source (`lib/server/today.ts`). It
-  merges Daybook tasks with **events read live from Google Calendar** (so
+  merges Life OS tasks with **events read live from Google Calendar** (so
   meetings you created in Google show up too, read-only), and reconciles
   **deletions**: if a task's calendar event was deleted in Google, the task is
   removed from the database. This only runs when the Google fetch succeeds, so a
@@ -277,7 +277,7 @@ clear-tasks`.
 - **Refresh-token lifetime:** while the Google app is in **Testing** mode, Google
   expires refresh tokens after ~7 days, so you'll re-click **Connect**
   occasionally. Publishing the app (or using a Workspace *Internal* app) removes
-  this. It's a Google policy, not a Daybook limit.
+  this. It's a Google policy, not a Life OS limit.
 - **iOS push** only works when the app is installed to the Home Screen.
 - **Single-user by design.** One passcode, one Google connection, one local
   database. Serving multiple people would require real per-user accounts and a

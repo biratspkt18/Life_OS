@@ -5,12 +5,36 @@ import type { Importance, Settings, Task } from "./types";
 export const TASKS_KEY = "/api/tasks";
 export const SETTINGS_KEY = "/api/settings";
 
+/** The clashing task/event the server reported (HTTP 409). */
+export interface Conflict {
+  title: string;
+  start: string;
+  end: string;
+  source: "lifeos" | "google";
+}
+
+/** Thrown by createTask/rescheduleTask when the slot is already taken. */
+export class ConflictError extends Error {
+  conflict: Conflict;
+  constructor(conflict: Conflict) {
+    super(`Time overlaps "${conflict.title}"`);
+    this.name = "ConflictError";
+    this.conflict = conflict;
+  }
+}
+
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...opts,
     headers: { "content-type": "application/json", ...(opts?.headers ?? {}) },
   });
-  if (!res.ok) throw new Error(`${opts?.method ?? "GET"} ${url} → ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 409) {
+      const body = await res.json().catch(() => null);
+      if (body?.conflict) throw new ConflictError(body.conflict);
+    }
+    throw new Error(`${opts?.method ?? "GET"} ${url} → ${res.status}`);
+  }
   return res.json();
 }
 
@@ -19,6 +43,8 @@ export interface NewTaskInput {
   durationMinutes: number;
   importance: Importance;
   scheduledStart: Date | null;
+  dueDate?: Date | null;
+  preferredDate?: Date | null;
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {
@@ -29,6 +55,8 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
       durationMinutes: input.durationMinutes,
       importance: input.importance,
       scheduledStart: input.scheduledStart ? input.scheduledStart.toISOString() : null,
+      dueDate: input.dueDate ? input.dueDate.toISOString() : null,
+      preferredDate: input.preferredDate ? input.preferredDate.toISOString() : null,
     }),
   });
   mutate(TASKS_KEY);

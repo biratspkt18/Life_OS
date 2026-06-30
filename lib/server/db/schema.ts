@@ -8,6 +8,10 @@ export const tasks = sqliteTable("tasks", {
   durationMinutes: integer("duration_minutes").notNull(),
   importance: text("importance").notNull(),
   scheduledStart: text("scheduled_start"),
+  /** To-do deadline (ISO, date-only at start of day). Null = no hard deadline. */
+  dueDate: text("due_date"),
+  /** When you'd ideally get to it (ISO, date-only). Guides scheduling. */
+  preferredDate: text("preferred_date"),
   googleEventId: text("google_event_id"),
   completed: integer("completed", { mode: "boolean" }).notNull().default(false),
   completedAt: text("completed_at"),

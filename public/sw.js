@@ -1,12 +1,12 @@
-// Daybook service worker — push notifications + click-to-focus.
+// Life OS service worker — push notifications + click-to-focus.
 self.addEventListener("push", (event) => {
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: "Daybook", body: event.data ? event.data.text() : "" };
+    data = { title: "Life OS", body: event.data ? event.data.text() : "" };
   }
-  const title = data.title || "Daybook";
+  const title = data.title || "Life OS";
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || "",
