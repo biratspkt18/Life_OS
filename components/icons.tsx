@@ -35,6 +35,34 @@ export function ClockIcon(p: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function EditIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+export function FlagIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M4 15V4h13l-2 4 2 4H4" />
+      <path d="M4 21v-6" />
+    </svg>
+  );
+}
+
+export function DotsIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" {...p}>
+      <circle cx="12" cy="5" r="1.7" />
+      <circle cx="12" cy="12" r="1.7" />
+      <circle cx="12" cy="19" r="1.7" />
+    </svg>
+  );
+}
+
 export function ArrowRightIcon(p: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...p}>

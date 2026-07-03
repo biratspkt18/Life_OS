@@ -88,6 +88,27 @@ export function disconnectGoogle(): void {
   db.delete(googleAccount).where(eq(googleAccount.id, "app")).run();
 }
 
+/** True for Google's permanent "the refresh token is dead" error. */
+export function isInvalidGrant(err: unknown): boolean {
+  const e = err as { message?: string; response?: { data?: { error?: string } } };
+  return (
+    e?.response?.data?.error === "invalid_grant" ||
+    (typeof e?.message === "string" && e.message.includes("invalid_grant"))
+  );
+}
+
+/**
+ * The refresh token is permanently invalid (revoked / expired), so calls will
+ * never succeed again. Drop the dead credentials — keeping the email — so the
+ * app reports "disconnected" and prompts a reconnect instead of failing silently.
+ */
+export function invalidateGoogleTokens(): void {
+  db.update(googleAccount)
+    .set({ refreshToken: null, accessToken: null, accessTokenExpiry: null })
+    .where(eq(googleAccount.id, "app"))
+    .run();
+}
+
 /**
  * An authenticated Calendar client, or null if not connected. The googleapis
  * client refreshes the short-lived access token from the stored refresh token

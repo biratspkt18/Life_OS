@@ -1,8 +1,14 @@
+"use client";
+import { motion } from "motion/react";
 import type { TodayItem } from "../lib/types";
-import { setCompleted } from "../lib/tasks";
+import { useCheckOff } from "../hooks/useCheckOff";
+import { dropTask } from "../lib/tasks";
 import { durationLabel, minutesBetween, timeLabel } from "../lib/dates";
 import { Checkbox } from "./Checkbox";
-import { CalendarIcon } from "./icons";
+import { openEdit } from "./Capture";
+import { openReschedule } from "./RescheduleModal";
+import { ActionMenu } from "./ActionMenu";
+import { CalendarIcon, ClockIcon, EditIcon, TrashIcon } from "./icons";
 
 /**
  * The "now / next" spotlight (brief §5C): the current or next upcoming block,
@@ -17,6 +23,7 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
       : null;
   const isNow = !!(start && end && start <= now && now < end);
   const isGoogle = item.source === "google";
+  const { checked, celebrating, toggle } = useCheckOff(item.id, item.completed);
 
   // Live progress for the block in progress: elapsed fraction + minutes left.
   const total = start && end ? minutesBetween(start, end) : 0;
@@ -24,11 +31,54 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
   const progressPct = isNow && total > 0 ? Math.min(100, Math.max(0, ((total - minsLeft) / total) * 100)) : 0;
 
   return (
-    <div className="surface mb-6 animate-fade-up border-l-[3px] border-l-accent bg-paper-card p-5 shadow-spotlight">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-accent">
-        {isNow ? "Now" : "Next up"}
-      </p>
-      <div className="flex items-start gap-4">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96, y: -8, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } }}
+      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      className="surface relative mb-6 overflow-hidden border-l-[3px] border-l-accent bg-paper-card p-5 shadow-spotlight"
+    >
+      {/* Sage "done" sweep on completion. */}
+      {celebrating && (
+        <motion.span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 bg-sage/20"
+          initial={{ x: "-100%" }}
+          animate={{ x: "0%" }}
+          transition={{ duration: 0.45, ease: "easeOut" }}
+        />
+      )}
+      <div className="relative z-10 mb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wider text-accent">
+          {isNow ? "Now" : "Next up"}
+        </p>
+        {!isGoogle && (
+          <div className="-mr-1 -mt-1">
+            <ActionMenu
+              actions={[
+                {
+                  label: "Edit",
+                  icon: <EditIcon className="h-4 w-4" />,
+                  onClick: () => openEdit(item.id),
+                },
+                {
+                  label: "Reschedule",
+                  icon: <ClockIcon className="h-4 w-4" />,
+                  onClick: () => openReschedule(item.id),
+                },
+                {
+                  label: "Delete",
+                  icon: <TrashIcon className="h-4 w-4" />,
+                  danger: true,
+                  onClick: () => dropTask(item.id),
+                },
+              ]}
+            />
+          </div>
+        )}
+      </div>
+      <div className="relative z-10 flex items-start gap-4">
         <div className="pt-1">
           {isGoogle ? (
             <span
@@ -39,8 +89,8 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
             </span>
           ) : (
             <Checkbox
-              checked={item.completed}
-              onChange={(c) => setCompleted(item.id, c)}
+              checked={checked}
+              onChange={toggle}
               label={`Mark “${item.title}” done`}
             />
           )}
@@ -49,7 +99,7 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
           <h2
             className={[
               "text-xl font-semibold leading-snug text-ink",
-              item.completed ? "text-muted line-through" : "",
+              checked ? "text-muted line-through" : "",
             ].join(" ")}
           >
             {item.title}
@@ -91,6 +141,6 @@ export function Spotlight({ item, now }: { item: TodayItem; now: Date }) {
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

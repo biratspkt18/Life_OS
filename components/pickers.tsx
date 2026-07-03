@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { CalendarIcon } from "./icons";
-import {
-  DURATION_PRESETS,
-  IMPORTANCE_LABEL,
-  type Importance,
-} from "../lib/types";
+import { IMPORTANCE_LABEL, type Importance } from "../lib/types";
 import {
   addMonths,
   durationLabel,
@@ -29,14 +26,18 @@ const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 export function DayCalendar({
   value,
   min,
+  max,
   onSelect,
 }: {
   value: Date;
   /** Earliest selectable day (inclusive); usually the start of today. */
   min: Date;
+  /** Latest selectable day (inclusive), if any. */
+  max?: Date;
   onSelect: (day: Date) => void;
 }) {
   const minDay = startOfDay(min);
+  const maxDay = max ? startOfDay(max) : null;
   const [month, setMonth] = useState(() => startOfMonth(value));
   const weeks = monthGrid(month);
 
@@ -73,7 +74,8 @@ export function DayCalendar({
 
       <div className="grid grid-cols-7 gap-0.5">
         {weeks.flat().map((day) => {
-          const disabled = isBefore(day, minDay);
+          const disabled =
+            isBefore(day, minDay) || (maxDay != null && isBefore(maxDay, day));
           const selected = isSameDay(day, value);
           const inMonth = isSameMonth(day, month);
           const today = isSameDay(day, minDay);
@@ -110,11 +112,13 @@ export function DayCalendar({
 export function DayPickerButton({
   value,
   min,
+  max,
   label,
   onSelect,
 }: {
   value: Date;
   min: Date;
+  max?: Date;
   label: string;
   onSelect: (day: Date) => void;
 }) {
@@ -159,6 +163,7 @@ export function DayPickerButton({
           <DayCalendar
             value={value}
             min={min}
+            max={max}
             onSelect={(d) => {
               onSelect(d);
               setOpen(false);
@@ -196,6 +201,19 @@ export function ImportancePicker({
   );
 }
 
+/** The two quick presets; everything else is set on the custom wheels. */
+const DURATION_QUICK = [30, 60] as const;
+const HOUR_OPTIONS = Array.from({ length: 9 }, (_, i) => i); // 0–8 hr
+const MINUTE_OPTIONS = Array.from({ length: 12 }, (_, i) => i * 5); // 0–55, step 5
+
+const nearest = (target: number, options: readonly number[]) =>
+  options.reduce((best, o) => (Math.abs(o - target) < Math.abs(best - target) ? o : best), options[0]);
+
+/**
+ * Duration control: two quick chips (30 min, 1 hour) and a "Custom" chip that
+ * reveals an Apple-Clock-style hour + minute wheel. The wheels snap, fade at the
+ * edges, and you can either spin them or tap a number to centre it.
+ */
 export function DurationPicker({
   value,
   onChange,
@@ -203,36 +221,177 @@ export function DurationPicker({
   value: number;
   onChange: (v: number) => void;
 }) {
-  const presets = DURATION_PRESETS as readonly number[];
-  const isPreset = presets.includes(value);
+  const isQuick = (DURATION_QUICK as readonly number[]).includes(value);
+  const [custom, setCustom] = useState(!isQuick);
+
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {presets.map((d) => (
-        <button
-          key={d}
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        {DURATION_QUICK.map((d) => {
+          const active = !custom && value === d;
+          return (
+            <motion.button
+              key={d}
+              type="button"
+              whileTap={{ scale: 0.95 }}
+              onClick={() => {
+                setCustom(false);
+                onChange(d);
+              }}
+              className={`chip ${active ? "chip-active" : ""}`}
+            >
+              {durationLabel(d)}
+            </motion.button>
+          );
+        })}
+        <motion.button
           type="button"
-          onClick={() => onChange(d)}
-          className={`chip ${value === d ? "chip-active" : ""}`}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => setCustom(true)}
+          className={`chip ${custom ? "chip-active" : ""}`}
+          aria-expanded={custom}
         >
-          {durationLabel(d)}
-        </button>
-      ))}
-      <label className={`chip flex items-center gap-1.5 ${!isPreset ? "chip-active" : ""}`}>
-        <input
-          type="number"
-          min={5}
-          max={480}
-          step={5}
-          value={value}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            if (!Number.isNaN(n)) onChange(Math.min(480, Math.max(5, n)));
-          }}
-          className="w-12 bg-transparent text-center outline-none"
-          aria-label="Custom duration in minutes"
+          Custom
+        </motion.button>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {custom && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <DurationWheel value={value} onChange={onChange} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Two snap-scrolling columns (hours + minutes) with a centred selection band. */
+function DurationWheel({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const hours = Math.min(8, Math.floor(value / 60));
+  const minutes = nearest(value % 60, MINUTE_OPTIONS);
+
+  const set = (h: number, m: number) => onChange(Math.min(480, Math.max(5, h * 60 + m)));
+
+  // paper-card, used to fade the wheel edges into the panel.
+  const fade =
+    "linear-gradient(to bottom, #FDFBF5 0%, rgba(253,251,245,0) 34%, rgba(253,251,245,0) 66%, #FDFBF5 100%)";
+
+  return (
+    <div className="mt-3 rounded-2xl border border-paper-edge bg-[#FDFBF5] px-2 py-1">
+      <div className="relative flex items-center justify-center">
+        {/* Centred selection band */}
+        <div className="pointer-events-none absolute inset-x-4 top-1/2 z-0 h-10 -translate-y-1/2 rounded-xl bg-accent-wash" />
+        {/* Edge fade */}
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{ backgroundImage: fade }}
         />
-        min
-      </label>
+        <div className="relative z-10 flex items-center gap-1">
+          <WheelColumn options={HOUR_OPTIONS} value={hours} onChange={(h) => set(h, minutes)} ariaLabel="Hours" />
+          <span className="w-8 text-sm font-medium text-muted">hr</span>
+          <WheelColumn options={MINUTE_OPTIONS} value={minutes} onChange={(m) => set(hours, m)} ariaLabel="Minutes" pad2 />
+          <span className="w-10 text-sm font-medium text-muted">min</span>
+        </div>
+      </div>
+      <p className="pb-1 text-center text-[0.7rem] text-muted-soft">
+        scroll, click, or focus and use ↑ ↓
+      </p>
+    </div>
+  );
+}
+
+const WHEEL_ITEM = 40; // px per row
+const WHEEL_PAD = 60; // spacer so first/last rows can centre (height 160 → pad 60)
+
+function WheelColumn({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+  pad2 = false,
+}: {
+  options: number[];
+  value: number;
+  onChange: (n: number) => void;
+  ariaLabel: string;
+  pad2?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idx = Math.max(0, options.indexOf(value));
+
+  // Keep the scroll position aligned to the selected value.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const target = idx * WHEEL_ITEM;
+    if (Math.abs(el.scrollTop - target) > 1) el.scrollTo({ top: target, behavior: "smooth" });
+  }, [idx]);
+
+  function onScroll() {
+    const el = ref.current;
+    if (!el) return;
+    if (settle.current) clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      const i = Math.min(options.length - 1, Math.max(0, Math.round(el.scrollTop / WHEEL_ITEM)));
+      if (options[i] !== value) onChange(options[i]);
+    }, 90);
+  }
+
+  // Keyboard support (laptop-friendly): the column is focusable and arrow keys
+  // move through the values; the numbers themselves aren't tab stops.
+  function onKeyDown(e: React.KeyboardEvent) {
+    const i = Math.max(0, options.indexOf(value));
+    let next = i;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") next = Math.min(options.length - 1, i + 1);
+    else if (e.key === "ArrowUp" || e.key === "ArrowLeft") next = Math.max(0, i - 1);
+    else if (e.key === "PageDown") next = Math.min(options.length - 1, i + 3);
+    else if (e.key === "PageUp") next = Math.max(0, i - 3);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = options.length - 1;
+    else return;
+    e.preventDefault();
+    if (options[next] !== value) onChange(options[next]);
+  }
+
+  return (
+    <div
+      ref={ref}
+      onScroll={onScroll}
+      onKeyDown={onKeyDown}
+      tabIndex={0}
+      role="listbox"
+      aria-label={ariaLabel}
+      className="h-40 w-14 snap-y snap-mandatory overflow-y-scroll rounded-xl outline-none ring-accent/40 [scrollbar-width:none] focus-visible:ring-2 [&::-webkit-scrollbar]:hidden"
+    >
+      <div style={{ height: WHEEL_PAD }} />
+      {options.map((o) => {
+        const selected = o === value;
+        return (
+          <button
+            key={o}
+            type="button"
+            role="option"
+            tabIndex={-1}
+            aria-selected={selected}
+            onClick={() => onChange(o)}
+            className={[
+              "flex h-10 w-full snap-center items-center justify-center text-xl tabular-nums outline-none transition-all duration-150",
+              selected ? "font-semibold text-ink" : "text-muted-soft/80 hover:text-muted",
+            ].join(" ")}
+          >
+            {pad2 ? String(o).padStart(2, "0") : o}
+          </button>
+        );
+      })}
+      <div style={{ height: WHEEL_PAD }} />
     </div>
   );
 }

@@ -1,26 +1,28 @@
 "use client";
 import { useState } from "react";
-import type { Task } from "../lib/types";
+import type { Suggestion } from "../hooks/useSuggestions";
 import { dropTask } from "../lib/tasks";
-import { dayLabel, durationLabel, format } from "../lib/dates";
-import { LooseEndsIcon } from "./icons";
+import { dayLabel, durationLabel, format, timeLabel } from "../lib/dates";
+import { ClockIcon, EditIcon, LooseEndsIcon, TrashIcon } from "./icons";
+import { ActionMenu } from "./ActionMenu";
 import { openReschedule } from "./RescheduleModal";
+import { openEdit } from "./Capture";
 
 /**
- * The gentle, one-at-a-time loose-end nudge on Today (Cue's "Got a little
- * room?"). Shows a single slipped task; saying yes opens the reschedule modal so
- * you choose a free time. Acting surfaces the next one. Only shown when there's
- * room left in the day.
+ * The gentle, one-at-a-time nudge on Today (Cue's "Got a little room?"). Shows a
+ * single thing that genuinely fits your remaining free time — a slipped task or
+ * an unscheduled to-do — with the soonest open slot it fits into. Saying yes
+ * opens the free-slot picker. Acting surfaces the next one.
  */
-export function LooseEndSuggestion({ tasks }: { tasks: Task[]; now: Date }) {
+export function LooseEndSuggestion({ suggestions }: { suggestions: Suggestion[]; now: Date }) {
   const [flash, setFlash] = useState<string | null>(null);
 
-  if (tasks.length === 0) return null;
-  const t = tasks[0];
+  if (suggestions.length === 0) return null;
+  const { task: t, slot, kind } = suggestions[0];
 
   function letGo() {
     dropTask(t.id);
-    setFlash("Let go. That’s allowed.");
+    setFlash(kind === "todo" ? "Removed." : "Let go. That’s allowed.");
     setTimeout(() => setFlash(null), 2600);
   }
 
@@ -31,11 +33,11 @@ export function LooseEndSuggestion({ tasks }: { tasks: Task[]; now: Date }) {
           <LooseEndsIcon className="h-4 w-4" /> Got a little room?
         </p>
         <span className="shrink-0 rounded-full bg-gold/25 px-2 py-0.5 text-[0.7rem] font-semibold text-gold-soft">
-          {tasks.length} from before
+          {suggestions.length} fit{suggestions.length === 1 ? "s" : ""}
         </span>
       </div>
       <p className="mt-1 text-sm text-muted">
-        Here’s one thing that slipped by. Want to take it on today? Totally fine to pass.
+        Here’s something that fits your free time today. Slot it in, or pass — no pressure.
       </p>
 
       {flash ? (
@@ -45,20 +47,50 @@ export function LooseEndSuggestion({ tasks }: { tasks: Task[]; now: Date }) {
       ) : (
         <div className="mt-3 rounded-xl bg-paper-card p-4 shadow-card">
           <p className="text-[0.98rem] font-semibold text-ink">{t.title}</p>
-          {t.scheduledStart && (
-            <p className="mt-0.5 text-xs text-muted">
-              slipped {dayLabel(new Date(t.scheduledStart))} · {format(new Date(t.scheduledStart), "MMM d")} ·
-              about {durationLabel(t.durationMinutes)}
-            </p>
-          )}
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
+            <span className="inline-flex items-center gap-1 font-medium text-accent">
+              <ClockIcon className="h-3.5 w-3.5" /> fits at {timeLabel(slot)}
+            </span>
+            <span className="text-muted-soft">·</span>
+            <span>about {durationLabel(t.durationMinutes)}</span>
+            {kind === "loose-end" && t.scheduledStart && (
+              <>
+                <span className="text-muted-soft">·</span>
+                <span>slipped {format(new Date(t.scheduledStart), "MMM d")}</span>
+              </>
+            )}
+            {kind === "todo" && t.dueDate && (
+              <>
+                <span className="text-muted-soft">·</span>
+                <span>due {dayLabel(new Date(t.dueDate))}</span>
+              </>
+            )}
+          </p>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex items-center justify-between gap-2">
             <button onClick={() => openReschedule(t.id)} className="btn-primary px-4 py-2 text-sm">
-              Yes
+              Slot it in
             </button>
-            <button onClick={letGo} className="btn-ghost px-3 py-2 text-sm text-muted">
-              let it go
-            </button>
+            <ActionMenu
+              actions={[
+                {
+                  label: "Find a time",
+                  icon: <ClockIcon className="h-4 w-4" />,
+                  onClick: () => openReschedule(t.id),
+                },
+                {
+                  label: "Edit",
+                  icon: <EditIcon className="h-4 w-4" />,
+                  onClick: () => openEdit(t.id),
+                },
+                {
+                  label: "Delete",
+                  icon: <TrashIcon className="h-4 w-4" />,
+                  danger: true,
+                  onClick: letGo,
+                },
+              ]}
+            />
           </div>
         </div>
       )}

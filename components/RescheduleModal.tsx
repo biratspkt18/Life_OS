@@ -1,23 +1,28 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { useAllTasks, useDayBusy, useExternalBusy, useSettings } from "../hooks/useDb";
+import { motion } from "motion/react";
+import { useAllTasks, useExternalBusy, useSettings } from "../hooks/useDb";
 import { ConflictError, rescheduleTask, updateTask } from "../lib/tasks";
-import { windowForDay } from "../lib/types";
 import type { Task } from "../lib/types";
 import { findFreeSlots } from "../lib/freeSlots";
 import {
-  atTime,
+  addDays,
   dayLabel,
   durationLabel,
   format,
-  isBefore,
+  isSameDay,
+  isToday,
+  isTomorrow,
   startOfDay,
   timeLabel,
 } from "../lib/dates";
-import { DayPickerButton } from "./pickers";
+import { cn } from "../lib/utils";
 import { CloseIcon } from "./icons";
+import { Button } from "./ui/button";
 
 const EVENT = "lifeos:reschedule";
+/** How far ahead we look for free time. */
+const HORIZON_DAYS = 14;
 
 /** Open the shared reschedule modal for a task, from anywhere. */
 export function openReschedule(taskId: string) {
@@ -25,11 +30,10 @@ export function openReschedule(taskId: string) {
 }
 
 /**
- * The single, shared reschedule modal — used by the timeline, the "Got a little
- * room?" nudge, and the Loose ends screen. You pick the exact day **and** time;
- * times that overlap an existing task or a Google Calendar event are blocked, so
- * nothing ever double-books. Rendered once (in the Shell); opened via
- * `openReschedule`.
+ * The shared "find a time" modal — used to place a to-do onto the calendar, to
+ * reschedule a task, or to log when a done task happened. It only ever offers
+ * slots you're actually free for: pick a day, then tap an open time. No manual
+ * time entry, no way to double-book. Rendered once (in the Shell).
  */
 export function RescheduleHost({ now }: { now: Date }) {
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -56,208 +60,271 @@ export function RescheduleHost({ now }: { now: Date }) {
   const task = tasks.find((t) => t.id === taskId);
   if (!task) return null;
 
-  // A to-do (no slot yet) is placed for the first time → "Schedule"; a finished
-  // task → "Edit done time"; otherwise → "Reschedule".
   const isNew = !task.scheduledStart;
-  const heading = task.completed ? "Edit done time" : isNew ? "Schedule" : "Reschedule";
+  const heading = task.completed ? "Log the time" : isNew ? "Find a time" : "Reschedule";
   const close = () => setTaskId(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div
-        className="absolute inset-0 bg-ink/20 backdrop-blur-[2px] animate-fade-in"
+        className="absolute inset-0 bg-ink/25 backdrop-blur-[2px] animate-fade-in"
         onClick={close}
       />
-      <div className="surface relative z-10 w-full max-w-md animate-scale-in rounded-b-none rounded-t-2xl p-5 sm:m-4 sm:rounded-2xl">
+      <motion.div
+        className="surface relative z-10 w-full max-w-md rounded-b-none rounded-t-2xl p-5 sm:m-4 sm:rounded-2xl"
+        initial={{ y: 24, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      >
         <div className="mb-1 flex items-start justify-between">
-          <h2 className="text-base font-semibold text-ink">{heading}</h2>
-          <button onClick={close} className="btn-ghost -mr-2 px-2 py-1.5" aria-label="Close">
+          <h2 className="font-display text-lg font-bold tracking-tight text-ink">{heading}</h2>
+          <button
+            onClick={close}
+            className="-mr-1.5 -mt-1 rounded-lg p-1.5 text-muted-soft transition-colors hover:bg-paper-edge/60 hover:text-ink"
+            aria-label="Close"
+          >
             <CloseIcon className="h-5 w-5" />
           </button>
         </div>
         <p className="text-sm font-medium text-ink">{task.title}</p>
         <p className="mb-4 text-xs text-muted">
-          about {durationLabel(task.durationMinutes)} ·{" "}
-          {task.completed ? "when did you do it?" : "pick a day and time"}
-          {task.dueDate && (
+          {durationLabel(task.durationMinutes)}
+          <span className="mx-1.5 text-muted-soft">·</span>
+          {task.completed ? "when did you get to it?" : "tap a time you're free"}
+          {task.dueDate && !task.completed && (
             <span className="text-accent"> · due {dayLabel(new Date(task.dueDate))}</span>
           )}
         </p>
-        {/* Keyed by task id so day/time state resets each time it's reopened. */}
-        <RescheduleBody key={task.id} task={task} now={now} onDone={close} />
-      </div>
+        {/* Keyed by task id so the picker resets each time it's reopened. */}
+        <SlotPicker key={task.id} task={task} now={now} onDone={close} />
+      </motion.div>
     </div>
   );
 }
 
-function RescheduleBody({
-  task,
-  now,
-  onDone,
-}: {
-  task: Task;
-  now: Date;
-  onDone: () => void;
-}) {
+interface Bucket {
+  label: string;
+  slots: Date[];
+}
+
+/** Split a day's free slots into Morning / Afternoon / Evening for scannability. */
+function bucketByPartOfDay(slots: Date[]): Bucket[] {
+  const buckets: Bucket[] = [
+    { label: "Morning", slots: [] },
+    { label: "Afternoon", slots: [] },
+    { label: "Evening", slots: [] },
+  ];
+  for (const s of slots) {
+    const h = s.getHours();
+    if (h < 12) buckets[0].slots.push(s);
+    else if (h < 17) buckets[1].slots.push(s);
+    else buckets[2].slots.push(s);
+  }
+  return buckets.filter((b) => b.slots.length > 0);
+}
+
+/** Short heading for a day pill: Today / Tomorrow / weekday. */
+function dayHeading(day: Date): string {
+  if (isToday(day)) return "Today";
+  if (isTomorrow(day)) return "Tomorrow";
+  return format(day, "EEE");
+}
+
+function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () => void }) {
   const settings = useSettings();
   const allTasks = useAllTasks();
-  const minDay = useMemo(() => startOfDay(now), [now]);
+  const today = useMemo(() => startOfDay(now), [now]);
+  const externalBusy = useExternalBusy(today, HORIZON_DAYS);
 
-  // Default day: the task's current slot if still upcoming; otherwise, for a
-  // to-do, lean on its preferred date (then due date); else today.
-  const current = task.scheduledStart ? new Date(task.scheduledStart) : null;
-  const [day, setDay] = useState<Date>(() => {
-    const future = (d: Date | null) => (d && !isBefore(d, minDay) ? startOfDay(d) : null);
-    return (
-      future(current) ??
-      future(task.preferredDate ? new Date(task.preferredDate) : null) ??
-      future(task.dueDate ? new Date(task.dueDate) : null) ??
-      minDay
-    );
-  });
-  const [time, setTime] = useState<string>(() => (current ? format(current, "HH:mm") : "09:00"));
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Busy intervals on the chosen day (this task excluded), incl. Google events.
-  const dayBusy = useDayBusy(day, task.id);
-  // Google busy across the day, so free-time suggestions dodge external events.
-  const externalBusy = useExternalBusy(day, 1);
-
-  const start = useMemo(() => atTime(day, time), [day, time]);
-  const end = useMemo(() => start.getTime() + task.durationMinutes * 60_000, [start, task]);
-
-  const isPast = start.getTime() < now.getTime();
-  const conflict = useMemo(
-    () => dayBusy.find((iv) => start.getTime() < iv.end.getTime() && iv.start.getTime() < end) ?? null,
-    [dayBusy, start, end],
-  );
-  const blocked = isPast || !!conflict;
-
-  // A few free start-times on the chosen day to tap (the app finds them; you choose).
-  const suggestions = useMemo(
+  // Every free start-time across the horizon that this task actually fits into.
+  const slots = useMemo(
     () =>
       findFreeSlots({
         durationMinutes: task.durationMinutes,
         settings,
         tasks: allTasks,
         now,
-        fromDay: day,
-        days: 1,
+        fromDay: today,
+        days: HORIZON_DAYS,
         excludeTaskId: task.id,
         externalBusy,
-        maxPerDay: 6,
-        limit: 6,
+        stepMinutes: 30,
+        maxPerDay: 80,
+        limit: 600,
       }),
-    [task, settings, allTasks, now, day, externalBusy],
+    [task, settings, allTasks, now, today, externalBusy],
   );
 
-  const win = windowForDay(settings, day);
+  const byDay = useMemo(() => {
+    const m = new Map<string, Date[]>();
+    for (const s of slots) {
+      const k = startOfDay(s).toDateString();
+      const list = m.get(k);
+      if (list) list.push(s);
+      else m.set(k, [s]);
+    }
+    return m;
+  }, [slots]);
+
+  const availableDays = useMemo(() => {
+    const days: Date[] = [];
+    for (let d = 0; d < HORIZON_DAYS; d++) {
+      const day = addDays(today, d);
+      if (byDay.has(day.toDateString())) days.push(day);
+    }
+    return days;
+  }, [byDay, today]);
+
+  // The task's current day, if it still has openings, is the friendly default.
+  const currentDay = task.scheduledStart ? startOfDay(new Date(task.scheduledStart)) : null;
+  const preferredDay =
+    (currentDay && byDay.has(currentDay.toDateString()) ? currentDay : null) ??
+    availableDays[0] ??
+    null;
+
+  // User choices override the derived defaults; everything else is computed in
+  // render, so changing day auto-picks that day's earliest slot (no effects).
+  const [pickedDay, setPickedDay] = useState<Date | null>(null);
+  const [pickedSlot, setPickedSlot] = useState<Date | null>(null);
+
+  const activeDay =
+    pickedDay && byDay.has(pickedDay.toDateString()) ? pickedDay : preferredDay;
+  const daySlots = activeDay ? byDay.get(activeDay.toDateString()) ?? [] : [];
+  const activeSlot =
+    pickedSlot && daySlots.some((s) => s.getTime() === pickedSlot.getTime())
+      ? pickedSlot
+      : daySlots[0] ?? null;
+
+  const buckets = useMemo(() => bucketByPartOfDay(daySlots), [daySlots]);
+
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function confirm() {
-    if (blocked || saving) return;
+    if (!activeSlot || saving) return;
     setSaving(true);
     setError(null);
     try {
       if (task.completed) {
-        // Logging when a done task actually happened — keep it completed.
-        await updateTask(task.id, { scheduledStart: start.toISOString() });
+        await updateTask(task.id, { scheduledStart: activeSlot.toISOString() });
       } else {
-        await rescheduleTask(task.id, start);
+        await rescheduleTask(task.id, activeSlot);
       }
       onDone();
     } catch (err) {
       setSaving(false);
-      if (err instanceof ConflictError) {
-        setError(`That overlaps “${err.conflict.title}” — pick another time.`);
-      } else {
-        setError("Couldn't reschedule — please try again.");
-      }
+      setError(
+        err instanceof ConflictError
+          ? "That slot was just taken — pick another."
+          : "Couldn't schedule — please try again.",
+      );
     }
+  }
+
+  if (availableDays.length === 0) {
+    return (
+      <p className="rounded-2xl border border-dashed border-paper-edge bg-paper-deep/30 px-4 py-6 text-center text-sm text-muted">
+        No open time that fits in the next {HORIZON_DAYS} days. Try a shorter estimate, or widen
+        your day windows in Settings.
+      </p>
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div>
-        <FieldLabel>Which day?</FieldLabel>
-        <DayPickerButton
-          value={day}
-          min={minDay}
-          label={`${dayLabel(day)} · ${format(day, "d MMM")}`}
-          onSelect={(d) => setDay(startOfDay(d))}
-        />
-        {!win.enabled && (
-          <p className="mt-1.5 text-xs text-muted">
-            Heads up — {format(day, "EEEE")} is set as a day off in your settings.
-          </p>
-        )}
+      {/* Day selector — only days that actually have room. */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {availableDays.map((day) => {
+          const active = !!activeDay && isSameDay(day, activeDay);
+          return (
+            <button
+              key={day.toDateString()}
+              type="button"
+              onClick={() => {
+                setPickedDay(day);
+                setPickedSlot(null);
+              }}
+              className={cn(
+                "relative shrink-0 rounded-xl px-3 py-2 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40",
+                active ? "text-white" : "text-ink hover:bg-paper-edge/50",
+              )}
+            >
+              {active && (
+                <motion.span
+                  layoutId="resched-day"
+                  aria-hidden
+                  className="absolute inset-0 rounded-xl bg-accent shadow-accent"
+                  transition={{ type: "spring", stiffness: 520, damping: 34 }}
+                />
+              )}
+              <span className="relative z-10 block text-[0.65rem] font-semibold uppercase tracking-wide opacity-90">
+                {dayHeading(day)}
+              </span>
+              <span className="relative z-10 block text-sm font-semibold tabular-nums">
+                {format(day, "d MMM")}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      <div>
-        <FieldLabel>What time?</FieldLabel>
-        <input
-          type="time"
-          value={time}
-          onChange={(e) => setTime(e.target.value || "09:00")}
-          className="rounded-xl border border-paper-edge bg-paper-card px-3 py-2 text-base font-medium tabular-nums text-ink outline-none focus:border-accent/40 [color-scheme:light]"
-          aria-label="Time"
-        />
-        {suggestions.length > 0 && (
-          <div className="mt-2.5">
+      {/* Free slots on the chosen day, grouped by part of day. */}
+      <div className="space-y-3">
+        {buckets.map((bucket) => (
+          <div key={bucket.label}>
             <p className="mb-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-soft">
-              Free that day
+              {bucket.label}
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {suggestions.map((s) => {
-                const hhmm = format(s, "HH:mm");
-                const active = hhmm === time;
+              {bucket.slots.map((s) => {
+                const on = !!activeSlot && s.getTime() === activeSlot.getTime();
                 return (
-                  <button
+                  <motion.button
                     key={s.toISOString()}
                     type="button"
-                    onClick={() => setTime(hhmm)}
-                    className={[
-                      "rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
-                      active
-                        ? "border-accent/50 bg-accent-wash text-accent"
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setPickedSlot(s)}
+                    aria-pressed={on}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-sm font-medium tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40",
+                      on
+                        ? "border-accent bg-accent text-white shadow-accent"
                         : "border-paper-edge bg-paper-card text-ink hover:border-accent/50 hover:bg-accent-wash",
-                    ].join(" ")}
+                    )}
                   >
                     {timeLabel(s)}
-                  </button>
+                  </motion.button>
                 );
               })}
             </div>
           </div>
-        )}
+        ))}
       </div>
 
-      {(blocked || error) && (
-        <p className="text-xs font-medium text-accent">
-          {error
-            ? error
-            : isPast
-              ? "That time has already passed — pick a later one."
-              : `That overlaps “${conflict!.title}” — pick another time.`}
-        </p>
-      )}
+      {error && <p className="text-xs font-medium text-accent">{error}</p>}
 
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button onClick={onDone} className="btn-ghost px-3 py-1.5 text-sm">
-          Cancel
-        </button>
-        <button
-          onClick={confirm}
-          disabled={blocked || saving}
-          className="btn-primary px-3 py-1.5 text-sm"
-        >
-          {saving ? "Moving…" : "Reschedule"}
-        </button>
+      <div className="flex items-center justify-between gap-3 border-t border-paper-edge pt-3">
+        <p className="min-w-0 text-xs text-muted">
+          {activeSlot ? (
+            <>
+              <span className="text-muted-soft">Schedules for </span>
+              <span className="font-medium text-ink">
+                {dayLabel(activeSlot)} · {timeLabel(activeSlot)}
+              </span>
+            </>
+          ) : (
+            "Pick a slot"
+          )}
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="ghost" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button onClick={confirm} disabled={!activeSlot || saving}>
+            {saving ? "Scheduling…" : task.completed ? "Log it" : "Schedule"}
+          </Button>
+        </div>
       </div>
     </div>
   );
-}
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">{children}</p>;
 }

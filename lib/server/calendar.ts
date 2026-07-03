@@ -1,4 +1,4 @@
-import { getCalendarClient } from "./google";
+import { getCalendarClient, invalidateGoogleTokens, isInvalidGrant } from "./google";
 import { endOf } from "../dates";
 import type { Task } from "../types";
 
@@ -26,14 +26,25 @@ export async function listEvents(
 ): Promise<CalendarEvent[] | null> {
   const c = await getCalendarClient();
   if (!c) return null;
-  const res = await c.calendar.events.list({
-    calendarId: c.calendarId,
-    timeMin: timeMinISO,
-    timeMax: timeMaxISO,
-    singleEvents: true,
-    orderBy: "startTime",
-    maxResults: 2500,
-  });
+  let res;
+  try {
+    res = await c.calendar.events.list({
+      calendarId: c.calendarId,
+      timeMin: timeMinISO,
+      timeMax: timeMaxISO,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 2500,
+    });
+  } catch (err) {
+    // A dead refresh token will never recover — drop it so the app switches to
+    // "disconnected" and prompts a reconnect (rather than erroring every request).
+    if (isInvalidGrant(err)) {
+      invalidateGoogleTokens();
+      return null;
+    }
+    throw err; // genuine/transient error — bubble up so callers don't wipe tasks.
+  }
   return (res.data.items ?? [])
     .filter((e) => e.status !== "cancelled" && e.id)
     .map((e) => ({
@@ -77,6 +88,7 @@ export async function createEvent(task: Task): Promise<string | null> {
     });
     return res.data.id ?? null;
   } catch (err) {
+    if (isInvalidGrant(err)) invalidateGoogleTokens();
     console.error("[calendar] create failed:", err);
     return null;
   }
@@ -93,6 +105,7 @@ export async function updateEvent(task: Task): Promise<void> {
       requestBody: eventBody(task),
     });
   } catch (err) {
+    if (isInvalidGrant(err)) invalidateGoogleTokens();
     console.error("[calendar] update failed:", err);
   }
 }
@@ -103,6 +116,7 @@ export async function deleteEvent(eventId: string): Promise<void> {
   try {
     await c.calendar.events.delete({ calendarId: c.calendarId, eventId });
   } catch (err) {
+    if (isInvalidGrant(err)) invalidateGoogleTokens();
     // 404/410 = already gone; anything else we just log.
     console.error("[calendar] delete failed:", err);
   }

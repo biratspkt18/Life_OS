@@ -43,6 +43,12 @@ export default {
           DEFAULT: "#6B6962",
           soft: "#9A978F",
         },
+        // Warm terracotta — destructive actions (delete). Never a stark red.
+        danger: {
+          DEFAULT: "#B4553F",
+          soft: "#8F3F2D",
+          wash: "#F6E7E1",
+        },
       },
       fontFamily: {
         // Body — Hanken Grotesk.

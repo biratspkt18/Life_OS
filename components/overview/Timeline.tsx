@@ -4,10 +4,12 @@ import type { Block, DayShape } from "../../lib/dayShape";
 import { compactDuration } from "../../lib/dayShape";
 import { IMPORTANCE_LABEL } from "../../lib/types";
 import { addMinutes, durationLabel, format, minutesBetween, startOfDay, timeLabel } from "../../lib/dates";
-import { setCompleted } from "../../lib/tasks";
+import { dropTask, setCompleted } from "../../lib/tasks";
 import { openReschedule } from "../RescheduleModal";
+import { openEdit } from "../Capture";
+import { ActionMenu } from "../ActionMenu";
 import { ImportanceMark } from "../pickers";
-import { CheckIcon, ClockIcon } from "../icons";
+import { CheckIcon, ClockIcon, EditIcon, TrashIcon } from "../icons";
 
 const TRACK_PX = 44; // thick, easy to read
 
@@ -54,26 +56,44 @@ export function Timeline({
   // The popover is interactive, so keep it open while moving from segment to it:
   // close on a short delay, cancelled when the pointer enters either one.
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // While the ⋯ menu (portaled outside the popover) is open, never close the
+  // popover — otherwise moving the pointer to the menu would dismiss both.
+  const menuOpen = useRef(false);
   function show(id: string) {
     if (closeTimer.current) clearTimeout(closeTimer.current);
     closeTimer.current = null;
     setActiveId(id);
   }
   function scheduleClose() {
+    if (menuOpen.current) return;
     if (closeTimer.current) clearTimeout(closeTimer.current);
     closeTimer.current = setTimeout(() => setActiveId(null), 220);
   }
-
-  /** A Life OS task that isn't done yet can be checked off or moved. */
-  const actionable = (b: Block) => b.item.source === "lifeos" && !b.item.completed;
+  function onMenuOpenChange(open: boolean) {
+    menuOpen.current = open;
+    if (open && closeTimer.current) clearTimeout(closeTimer.current);
+    else if (!open) scheduleClose();
+  }
 
   function markDone(b: Block) {
     setCompleted(b.item.id, true);
     setActiveId(null);
   }
+  function markUndone(b: Block) {
+    setCompleted(b.item.id, false);
+    setActiveId(null);
+  }
   function reschedule(b: Block) {
     setActiveId(null);
     openReschedule(b.item.id);
+  }
+  function edit(b: Block) {
+    setActiveId(null);
+    openEdit(b.item.id);
+  }
+  function remove(b: Block) {
+    setActiveId(null);
+    dropTask(b.item.id);
   }
 
   if (!shape.enabled || windowMinutes <= 0) {
@@ -148,57 +168,86 @@ export function Timeline({
             transform: "translate(-50%, calc(-100% - 10px))",
           }}
         >
-          <p className="truncate text-sm font-medium text-ink">{active.item.title}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {timeLabel(active.start)}
-            {active.item.durationMinutes != null && (
-              <>
-                <span className="mx-1.5 text-muted-soft">·</span>
-                {durationLabel(active.item.durationMinutes)}
-              </>
-            )}
-          </p>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-            {active.item.importance ? (
-              <>
-                <ImportanceMark importance={active.item.importance} />
-                {IMPORTANCE_LABEL[active.item.importance]}
-                {active.item.completed && <span className="text-muted-soft">· done</span>}
-                {isUndone(active) && <span className="text-muted-soft">· not done</span>}
-              </>
-            ) : (
-              "Google Calendar"
+          {/* Content on the left; a pencil edit button (like the task rows) on
+              the right for Life OS items. */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-ink">{active.item.title}</p>
+              <p className="mt-0.5 text-xs text-muted">
+                {timeLabel(active.start)}
+                {active.item.durationMinutes != null && (
+                  <>
+                    <span className="mx-1.5 text-muted-soft">·</span>
+                    {durationLabel(active.item.durationMinutes)}
+                  </>
+                )}
+              </p>
+              <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                {active.item.importance ? (
+                  <>
+                    <ImportanceMark importance={active.item.importance} />
+                    {IMPORTANCE_LABEL[active.item.importance]}
+                    {active.item.completed && <span className="text-muted-soft">· done</span>}
+                    {isUndone(active) && <span className="text-muted-soft">· not done</span>}
+                  </>
+                ) : (
+                  "Google Calendar"
+                )}
+              </div>
+            </div>
+
+            {active.item.source === "lifeos" && (
+              <div className="-mr-1 -mt-0.5 shrink-0">
+                <ActionMenu
+                  onOpenChange={onMenuOpenChange}
+                  actions={
+                    active.item.completed
+                      ? [
+                          {
+                            label: "Mark not done",
+                            icon: <CheckIcon className="h-4 w-4" />,
+                            onClick: () => markUndone(active),
+                          },
+                          {
+                            label: "Edit",
+                            icon: <EditIcon className="h-4 w-4" />,
+                            onClick: () => edit(active),
+                          },
+                          {
+                            label: "Delete",
+                            icon: <TrashIcon className="h-4 w-4" />,
+                            danger: true,
+                            onClick: () => remove(active),
+                          },
+                        ]
+                      : [
+                          {
+                            label: "Mark done",
+                            icon: <CheckIcon className="h-4 w-4" />,
+                            onClick: () => markDone(active),
+                          },
+                          {
+                            label: "Reschedule",
+                            icon: <ClockIcon className="h-4 w-4" />,
+                            onClick: () => reschedule(active),
+                          },
+                          {
+                            label: "Edit",
+                            icon: <EditIcon className="h-4 w-4" />,
+                            onClick: () => edit(active),
+                          },
+                          {
+                            label: "Delete",
+                            icon: <TrashIcon className="h-4 w-4" />,
+                            danger: true,
+                            onClick: () => remove(active),
+                          },
+                        ]
+                  }
+                />
+              </div>
             )}
           </div>
-
-          {actionable(active) && (
-            <div className="mt-2.5 flex items-center gap-2 border-t border-paper-edge pt-2.5">
-              <button
-                onClick={() => markDone(active)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-sage/15 px-2.5 py-1.5 text-xs font-medium text-sage-soft transition-colors hover:bg-sage/25"
-              >
-                <CheckIcon className="h-3.5 w-3.5" /> Done
-              </button>
-              <button
-                onClick={() => reschedule(active)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent-wash px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/15"
-              >
-                <ClockIcon className="h-3.5 w-3.5" /> Reschedule
-              </button>
-            </div>
-          )}
-
-          {/* A done task keeps its slot; let the user log the time they actually did it. */}
-          {active.item.source === "lifeos" && active.item.completed && (
-            <div className="mt-2.5 flex items-center gap-2 border-t border-paper-edge pt-2.5">
-              <button
-                onClick={() => reschedule(active)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent-wash px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/15"
-              >
-                <ClockIcon className="h-3.5 w-3.5" /> Change time
-              </button>
-            </div>
-          )}
         </div>
       )}
 

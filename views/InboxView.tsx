@@ -1,13 +1,16 @@
 "use client";
 import { useMemo } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { useInboxTasks } from "../hooks/useDb";
-import { openCapture } from "../components/Capture";
+import { useCheckOff } from "../hooks/useCheckOff";
+import { openCapture, openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
-import { dropTask, setCompleted } from "../lib/tasks";
+import { ActionMenu } from "../components/ActionMenu";
+import { dropTask } from "../lib/tasks";
 import { dayLabel, durationLabel, isBefore, startOfDay } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
 import { ImportanceMark } from "../components/pickers";
-import { ArrowRightIcon, TrashIcon } from "../components/icons";
+import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
 import type { Task } from "../lib/types";
 
 /**
@@ -58,14 +61,16 @@ export function InboxView({ now }: { now: Date }) {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {sorted.map((t) => (
-            <TodoRow
-              key={t.id}
-              task={t}
-              todayStart={todayStart}
-              onSchedule={() => openReschedule(t.id)}
-            />
-          ))}
+          <AnimatePresence initial={false}>
+            {sorted.map((t) => (
+              <TodoRow
+                key={t.id}
+                task={t}
+                todayStart={todayStart}
+                onSchedule={() => openReschedule(t.id)}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       )}
     </section>
@@ -84,16 +89,43 @@ function TodoRow({
   const due = task.dueDate ? new Date(task.dueDate) : null;
   const preferred = task.preferredDate ? new Date(task.preferredDate) : null;
   const overdue = due ? isBefore(due, todayStart) : false;
+  const { checked, celebrating, toggle } = useCheckOff(task.id, task.completed);
 
   return (
-    <div className="surface flex items-center gap-3 px-4 py-3.5">
-      <Checkbox
-        checked={false}
-        onChange={() => setCompleted(task.id, true)}
-        label={`Mark “${task.title}” done`}
-      />
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 truncate text-[0.98rem] font-medium text-ink">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{
+        opacity: 0,
+        height: 0,
+        marginTop: 0,
+        scale: 0.97,
+        transition: { duration: 0.34, ease: [0.16, 1, 0.3, 1] },
+      }}
+      transition={{ type: "spring", stiffness: 460, damping: 34 }}
+      className={`surface relative flex items-center gap-3 overflow-hidden px-4 py-3.5 ${
+        checked ? "opacity-60" : ""
+      }`}
+    >
+      {celebrating && (
+        <motion.span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 bg-sage/20"
+          initial={{ x: "-100%" }}
+          animate={{ x: "0%" }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        />
+      )}
+      <span className="relative z-10">
+        <Checkbox checked={checked} onChange={toggle} label={`Mark “${task.title}” done`} />
+      </span>
+      <div className="relative z-10 min-w-0 flex-1">
+        <p
+          className={`flex items-center gap-2 truncate text-[0.98rem] font-medium text-ink ${
+            checked ? "text-muted line-through decoration-muted/60" : ""
+          }`}
+        >
           <ImportanceMark importance={task.importance} />
           {task.title}
         </p>
@@ -115,19 +147,28 @@ function TodoRow({
           )}
         </p>
       </div>
-      <button
-        onClick={onSchedule}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-accent-wash px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-accent/15"
-      >
-        schedule <ArrowRightIcon className="h-3.5 w-3.5" />
-      </button>
-      <button
-        onClick={() => dropTask(task.id)}
-        aria-label={`Delete “${task.title}”`}
-        className="shrink-0 rounded-lg p-1.5 text-muted-soft transition-colors hover:text-ink"
-      >
-        <TrashIcon className="h-4 w-4" />
-      </button>
-    </div>
+      <div className="relative z-10 shrink-0">
+        <ActionMenu
+          actions={[
+            {
+              label: "Schedule",
+              icon: <ClockIcon className="h-4 w-4" />,
+              onClick: onSchedule,
+            },
+            {
+              label: "Edit",
+              icon: <EditIcon className="h-4 w-4" />,
+              onClick: () => openEdit(task.id),
+            },
+            {
+              label: "Delete",
+              icon: <TrashIcon className="h-4 w-4" />,
+              danger: true,
+              onClick: () => dropTask(task.id),
+            },
+          ]}
+        />
+      </div>
+    </motion.div>
   );
 }

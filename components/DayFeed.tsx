@@ -1,4 +1,5 @@
 "use client";
+import { AnimatePresence } from "motion/react";
 import type { DayGroups } from "../lib/dayShape";
 import { Spotlight } from "./Spotlight";
 import { TaskRow } from "./TaskRow";
@@ -28,21 +29,28 @@ export function DayFeed({ groups, now }: { groups: DayGroups; now: Date }) {
         </div>
       )}
 
-      {spotlight && <Spotlight item={spotlight} now={now} />}
+      <AnimatePresence mode="wait" initial={false}>
+        {spotlight && <Spotlight key={spotlight.id} item={spotlight} now={now} />}
+      </AnimatePresence>
 
       {upcoming.length > 0 && (
         <section>
           <p className="mb-2.5 text-xs font-semibold uppercase tracking-wider text-muted">
             Up next
-            <span className="ml-2 font-normal normal-case tracking-normal text-muted-soft">
-              {upcoming.length} more
-            </span>
           </p>
+          {/* Only the next few — the timeline above already shows the whole day. */}
           <div className="space-y-2.5">
-            {upcoming.map((item) => (
-              <TaskRow key={item.id} item={item} />
-            ))}
+            <AnimatePresence initial={false}>
+              {upcoming.slice(0, 3).map((item) => (
+                <TaskRow key={item.id} item={item} />
+              ))}
+            </AnimatePresence>
           </div>
+          {upcoming.length > 3 && (
+            <p className="mt-2.5 text-xs text-muted-soft">
+              +{upcoming.length - 3} more on your timeline above
+            </p>
+          )}
         </section>
       )}
     </div>

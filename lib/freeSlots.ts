@@ -75,7 +75,9 @@ export function findFreeSlots(opts: {
       if (end > winEnd) break;
       const conflict = busy.find((iv) => cursor < iv.end && iv.start < end);
       if (conflict) {
-        cursor = roundUpToStep(conflict.end, step);
+        // Resume the moment the blocker ends — that exact time is a real opening
+        // (e.g. a 3:15–3:30 gap), so don't round it up past the gap.
+        cursor = conflict.end;
       } else {
         out.push(new Date(cursor));
         perDay += 1;

@@ -1,9 +1,15 @@
 "use client";
+import { AnimatePresence, motion } from "motion/react";
 import { usePastUndoneTasks } from "../hooks/useDb";
-import { dropTask, setCompleted } from "../lib/tasks";
+import { useCheckOff } from "../hooks/useCheckOff";
+import { dropTask } from "../lib/tasks";
 import { dayLabel, durationLabel, format } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
+import { openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
+import { ActionMenu } from "../components/ActionMenu";
+import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import type { Task } from "../lib/types";
 
 /**
  * Loose ends — past tasks that slipped by. No guilt: check off what's done,
@@ -30,47 +36,90 @@ export function LooseEndsView({ now }: { now: Date }) {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {tasks.map((t) => (
-            <div
-              key={t.id}
-              className="flex items-center gap-3.5 rounded-2xl border border-gold/40 bg-gold-wash/50 px-4 py-3.5"
-            >
-              <Checkbox
-                checked={false}
-                onChange={() => setCompleted(t.id, true)}
-                label={`Mark “${t.title}” done`}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[0.98rem] font-medium text-ink">{t.title}</p>
-                <p className="mt-0.5 text-xs text-muted">
-                  {t.scheduledStart && (
-                    <>
-                      was due {dayLabel(new Date(t.scheduledStart))} ·{" "}
-                      {format(new Date(t.scheduledStart), "MMM d")}
-                      <span className="mx-1.5 text-muted-soft">·</span>
-                    </>
-                  )}
-                  ~{durationLabel(t.durationMinutes)}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  onClick={() => openReschedule(t.id)}
-                  className="rounded-xl bg-accent px-3 py-1.5 text-sm font-medium text-white shadow-accent transition-colors hover:bg-accent-soft"
-                >
-                  find a time
-                </button>
-                <button
-                  onClick={() => dropTask(t.id)}
-                  className="rounded-xl px-2.5 py-1.5 text-sm text-muted-soft transition-colors hover:text-ink"
-                >
-                  let it go
-                </button>
-              </div>
-            </div>
-          ))}
+          <AnimatePresence initial={false}>
+            {tasks.map((t) => (
+              <LooseEndRow key={t.id} task={t} />
+            ))}
+          </AnimatePresence>
         </div>
       )}
     </section>
+  );
+}
+
+function LooseEndRow({ task }: { task: Task }) {
+  const { checked, celebrating, toggle } = useCheckOff(task.id, task.completed);
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{
+        opacity: 0,
+        height: 0,
+        marginTop: 0,
+        scale: 0.97,
+        transition: { duration: 0.34, ease: [0.16, 1, 0.3, 1] },
+      }}
+      transition={{ type: "spring", stiffness: 460, damping: 34 }}
+      className={`relative flex items-center gap-3.5 overflow-hidden rounded-2xl border border-gold/40 bg-gold-wash/50 px-4 py-3.5 ${
+        checked ? "opacity-60" : ""
+      }`}
+    >
+      {celebrating && (
+        <motion.span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 bg-sage/25"
+          initial={{ x: "-100%" }}
+          animate={{ x: "0%" }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        />
+      )}
+      <span className="relative z-10">
+        <Checkbox checked={checked} onChange={toggle} label={`Mark “${task.title}” done`} />
+      </span>
+      <div className="relative z-10 min-w-0 flex-1">
+        <p
+          className={`truncate text-[0.98rem] font-medium text-ink ${
+            checked ? "text-muted line-through decoration-muted/60" : ""
+          }`}
+        >
+          {task.title}
+        </p>
+        <p className="mt-0.5 text-xs text-muted">
+          {task.scheduledStart && (
+            <>
+              was due {dayLabel(new Date(task.scheduledStart))} ·{" "}
+              {format(new Date(task.scheduledStart), "MMM d")}
+              <span className="mx-1.5 text-muted-soft">·</span>
+            </>
+          )}
+          ~{durationLabel(task.durationMinutes)}
+        </p>
+      </div>
+      <div className="relative z-10 flex shrink-0 items-center">
+        <ActionMenu
+          actions={[
+            {
+              label: "Find a time",
+              icon: <ClockIcon className="h-4 w-4" />,
+              onClick: () => openReschedule(task.id),
+            },
+            {
+              label: "Edit",
+              icon: <EditIcon className="h-4 w-4" />,
+              onClick: () => openEdit(task.id),
+            },
+            {
+              label: "Delete",
+              icon: <TrashIcon className="h-4 w-4" />,
+              danger: true,
+              onClick: () => dropTask(task.id),
+            },
+          ]}
+        />
+      </div>
+    </motion.div>
   );
 }

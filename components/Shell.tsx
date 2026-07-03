@@ -59,7 +59,7 @@ export default function Shell() {
           className="mb-5 flex items-center justify-between rounded-2xl border border-paper-edge bg-paper-card px-3.5 py-2.5 text-sm font-medium text-ink shadow-card transition-colors hover:border-accent/40"
         >
           <span className="flex items-center gap-2">
-            <PlusIcon className="h-4 w-4 text-accent" /> Jot a thought
+            <PlusIcon className="h-4 w-4 text-accent" /> Add a task
           </span>
           <kbd className="rounded bg-paper-edge px-1.5 py-0.5 text-[0.65rem] font-semibold text-muted">
             n

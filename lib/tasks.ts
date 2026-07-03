@@ -1,9 +1,42 @@
 "use client";
 import { mutate } from "swr";
-import type { Importance, Settings, Task } from "./types";
+import type { Importance, Settings, Task, TodayItem } from "./types";
 
 export const TASKS_KEY = "/api/tasks";
 export const SETTINGS_KEY = "/api/settings";
+
+/**
+ * Every SWR cache that renders a task's completion state. The day views read
+ * from `/api/today?…`, the month grid from `/api/range?…`, and the raw list
+ * (inbox / loose ends) from `/api/tasks` — so a completion has to touch all
+ * three, not just `/api/tasks`.
+ */
+function isItemCacheKey(key: unknown): key is string {
+  return (
+    typeof key === "string" &&
+    (key === TASKS_KEY || key.startsWith("/api/today") || key.startsWith("/api/range"))
+  );
+}
+
+/** Immutably flip `completed` (and `completedAt`, where present) on one id. */
+function withCompleted(
+  list: Task[] | TodayItem[] | undefined,
+  id: string,
+  completed: boolean,
+): Task[] | TodayItem[] | undefined {
+  if (!Array.isArray(list)) return list;
+  let changed = false;
+  const next = (list as (Task | TodayItem)[]).map((item) => {
+    if (item.id !== id) return item;
+    changed = true;
+    const patched = { ...item, completed };
+    if ("completedAt" in item) {
+      (patched as Task).completedAt = completed ? new Date().toISOString() : null;
+    }
+    return patched;
+  });
+  return (changed ? next : list) as Task[] | TodayItem[];
+}
 
 /** The clashing task/event the server reported (HTTP 409). */
 export interface Conflict {
@@ -59,16 +92,41 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
       preferredDate: input.preferredDate ? input.preferredDate.toISOString() : null,
     }),
   });
-  mutate(TASKS_KEY);
+  // Optimistically drop the new task into the raw list so the To-do list and the
+  // Today "Due today" section update *now*, without waiting on a refetch.
+  await mutate(
+    TASKS_KEY,
+    (list?: Task[]) => (Array.isArray(list) ? [task, ...list] : list),
+    { revalidate: false },
+  );
+  // Then reconcile every view against the server (day / month included).
+  mutate(isItemCacheKey);
   return task;
 }
 
 export async function setCompleted(id: string, completed: boolean): Promise<void> {
-  await req(`${TASKS_KEY}/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ completed }),
-  });
-  mutate(TASKS_KEY);
+  // Optimistic: flip the checkbox everywhere it shows *now*, before the network
+  // round-trip, so checking a task feels instant. `revalidate: false` keeps the
+  // patched value on screen instead of snapping back to the stale fetch.
+  await mutate(
+    isItemCacheKey,
+    (list?: Task[] | TodayItem[]) => withCompleted(list, id, completed),
+    { revalidate: false },
+  );
+
+  try {
+    await req(`${TASKS_KEY}/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ completed }),
+    });
+  } catch (err) {
+    // Server rejected it — revalidate to roll the optimistic change back.
+    mutate(isItemCacheKey);
+    throw err;
+  }
+
+  // Confirm against server truth (completedAt, any reconciliation).
+  mutate(isItemCacheKey);
 }
 
 export async function rescheduleTask(id: string, newStart: Date): Promise<void> {
@@ -80,17 +138,17 @@ export async function rescheduleTask(id: string, newStart: Date): Promise<void> 
       completedAt: null,
     }),
   });
-  mutate(TASKS_KEY);
+  mutate(isItemCacheKey);
 }
 
 export async function updateTask(id: string, patch: Partial<Task>): Promise<void> {
   await req(`${TASKS_KEY}/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
-  mutate(TASKS_KEY);
+  mutate(isItemCacheKey);
 }
 
 export async function dropTask(id: string): Promise<void> {
   await req(`${TASKS_KEY}/${id}`, { method: "DELETE" });
-  mutate(TASKS_KEY);
+  mutate(isItemCacheKey);
 }
 
 /** One-off fetch of all tasks (used by sequential re-homing in the loop). */
