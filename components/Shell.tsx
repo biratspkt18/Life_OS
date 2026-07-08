@@ -9,6 +9,7 @@ import { InboxView } from "../views/InboxView";
 import { LooseEndsView } from "../views/LooseEndsView";
 import { SettingsView } from "../views/SettingsView";
 import { Capture, openCapture } from "./Capture";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { RescheduleHost } from "./RescheduleModal";
 import { CalendarIcon, InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, SunIcon } from "./icons";
 
@@ -87,11 +88,14 @@ export default function Shell() {
       {/* Main content */}
       <div className="relative z-10 md:pl-60">
         <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:pb-16 md:pt-10">
-          {view === "today" && <TodayView now={now} />}
-          {view === "calendar" && <CalendarView now={now} />}
-          {view === "inbox" && <InboxView now={now} />}
-          {view === "loose" && <LooseEndsView now={now} />}
-          {view === "settings" && <SettingsView />}
+          {/* Keyed by view so navigating away resets a tripped boundary. */}
+          <ErrorBoundary key={view}>
+            {view === "today" && <TodayView now={now} />}
+            {view === "calendar" && <CalendarView now={now} />}
+            {view === "inbox" && <InboxView now={now} />}
+            {view === "loose" && <LooseEndsView now={now} />}
+            {view === "settings" && <SettingsView />}
+          </ErrorBoundary>
         </main>
       </div>
 

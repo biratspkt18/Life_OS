@@ -11,6 +11,9 @@ fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
 
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
+// The Next server and the reminder worker share this file; wait out short
+// write contention instead of surfacing SQLITE_BUSY.
+sqlite.pragma("busy_timeout = 5000");
 
 export const db = drizzle(sqlite, { schema });
 export { schema };

@@ -175,10 +175,21 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
     return days;
   }, [byDay, today]);
 
-  // The task's current day, if it still has openings, is the friendly default.
+  // A to-do with a future preferred date opens the picker *on that day* —
+  // "preferred" should guide placement, not just sort suggestions. It's a
+  // default, not a wall: earlier days stay one tap away.
+  const prefDay = useMemo(() => {
+    if (task.completed || !task.preferredDate) return null;
+    const p = startOfDay(new Date(task.preferredDate));
+    return !Number.isNaN(p.getTime()) && p > today ? p : null;
+  }, [task.completed, task.preferredDate, today]);
+
+  // The task's current day, if it still has openings, is the friendly default;
+  // then the preferred date; then the first day with room.
   const currentDay = task.scheduledStart ? startOfDay(new Date(task.scheduledStart)) : null;
   const preferredDay =
     (currentDay && byDay.has(currentDay.toDateString()) ? currentDay : null) ??
+    (prefDay && byDay.has(prefDay.toDateString()) ? prefDay : null) ??
     availableDays[0] ??
     null;
 

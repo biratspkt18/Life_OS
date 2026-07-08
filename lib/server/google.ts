@@ -49,6 +49,9 @@ export async function exchangeCode(code: string): Promise<void> {
   const existing = getAccount();
   // Google only returns a refresh token on first consent; keep the old one if absent.
   const refreshToken = tokens.refresh_token ?? existing?.refreshToken ?? null;
+  // Same for the email: a transient userinfo failure on reconnect must not
+  // wipe the address we already know.
+  const keepEmail = email ?? existing?.email ?? null;
 
   db.insert(googleAccount)
     .values({
@@ -56,7 +59,7 @@ export async function exchangeCode(code: string): Promise<void> {
       refreshToken,
       accessToken: tokens.access_token ?? null,
       accessTokenExpiry: tokens.expiry_date ?? null,
-      email,
+      email: keepEmail,
       calendarId: existing?.calendarId ?? "primary",
     })
     .onConflictDoUpdate({
@@ -65,7 +68,7 @@ export async function exchangeCode(code: string): Promise<void> {
         refreshToken,
         accessToken: tokens.access_token ?? null,
         accessTokenExpiry: tokens.expiry_date ?? null,
-        email,
+        email: keepEmail,
         calendarId: existing?.calendarId ?? "primary",
       },
     })

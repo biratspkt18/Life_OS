@@ -14,12 +14,13 @@ export async function GET() {
   }
   const state = randomUUID();
   const res = NextResponse.redirect(authUrl(state));
-  // CSRF: echo this back in the callback.
+  // CSRF: echo this back in the callback. 30 min, so a slow consent screen
+  // (2FA, account picker, reading the scopes) doesn't strand the flow.
   res.cookies.set("g_state", state, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    maxAge: 600,
+    maxAge: 1800,
     secure: process.env.NODE_ENV === "production",
   });
   return res;

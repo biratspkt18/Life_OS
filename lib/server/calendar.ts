@@ -26,16 +26,25 @@ export async function listEvents(
 ): Promise<CalendarEvent[] | null> {
   const c = await getCalendarClient();
   if (!c) return null;
-  let res;
+  const items = [];
   try {
-    res = await c.calendar.events.list({
-      calendarId: c.calendarId,
-      timeMin: timeMinISO,
-      timeMax: timeMaxISO,
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 2500,
-    });
+    // Follow nextPageToken so a busy window can't silently truncate — a
+    // truncated list once looked like mass deletion to the reconciler.
+    let pageToken: string | undefined;
+    let pages = 0;
+    do {
+      const res = await c.calendar.events.list({
+        calendarId: c.calendarId,
+        timeMin: timeMinISO,
+        timeMax: timeMaxISO,
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 2500,
+        pageToken,
+      });
+      items.push(...(res.data.items ?? []));
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken && ++pages < 8);
   } catch (err) {
     // A dead refresh token will never recover — drop it so the app switches to
     // "disconnected" and prompts a reconnect (rather than erroring every request).
@@ -45,7 +54,7 @@ export async function listEvents(
     }
     throw err; // genuine/transient error — bubble up so callers don't wipe tasks.
   }
-  return (res.data.items ?? [])
+  return items
     .filter((e) => e.status !== "cancelled" && e.id)
     .map((e) => ({
       id: e.id!,
@@ -60,6 +69,29 @@ export async function listEvents(
       end: e.end?.dateTime ?? e.end?.date ?? null,
       allDay: !e.start?.dateTime,
     }));
+}
+
+/**
+ * Definitive existence check for one event — the reconciler's source of truth
+ * before deleting a local task. Absence from a list fetch is only a suspicion
+ * (truncation, an event moved outside the window, list lag after create);
+ * `events.get` answers for the event itself. Any uncertainty (network error,
+ * not connected) returns "unknown" so callers keep the task.
+ */
+export async function eventExists(eventId: string): Promise<boolean | "unknown"> {
+  const c = await getCalendarClient();
+  if (!c) return "unknown";
+  try {
+    const res = await c.calendar.events.get({ calendarId: c.calendarId, eventId });
+    return res.data.status !== "cancelled";
+  } catch (err) {
+    const status =
+      (err as { response?: { status?: number } }).response?.status ??
+      (err as { code?: number }).code;
+    if (status === 404 || status === 410) return false;
+    if (isInvalidGrant(err)) invalidateGoogleTokens();
+    return "unknown";
+  }
 }
 
 function eventBody(task: Task) {

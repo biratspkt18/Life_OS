@@ -9,6 +9,7 @@ import {
   dayLabel,
   durationLabel,
   format,
+  isBefore,
   isSameDay,
   startOfDay,
   timeLabel,
@@ -17,9 +18,11 @@ import { buildDayShape, groupDay } from "../lib/dayShape";
 import { DayFeed } from "../components/DayFeed";
 import { LooseEndSuggestion } from "../components/LooseEndSuggestion";
 import { DoneToday } from "../components/DoneToday";
+import { NewDateModal } from "../components/NewDateModal";
 import { Timeline } from "../components/overview/Timeline";
 import { openCapture, openEdit } from "../components/Capture";
-import { FlagIcon, PlusIcon } from "../components/icons";
+import { dropTask } from "../lib/tasks";
+import { FlagIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { Button } from "../components/ui/button";
 
 /** You can browse at most this many days on either side of today. */
@@ -71,6 +74,16 @@ export function TodayView({ now }: { now: Date }) {
       .map((t) => ({ task: t, due: onToday(t.dueDate) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxTodos, startOfDay(now).getTime()]);
+
+  // To-dos whose due date already slipped — surfaced here too so they can't be
+  // avoided by never opening the To-do screen. One tap to redate or let go.
+  const overdueTodos = useMemo(() => {
+    return inboxTodos
+      .filter((t) => t.dueDate && isBefore(new Date(t.dueDate), today))
+      .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
+  }, [inboxTodos, today]);
+  const [fixId, setFixId] = useState<string | null>(null);
+  const fixTask = fixId ? overdueTodos.find((t) => t.id === fixId) ?? null : null;
 
   const countLabel = useMemo(() => {
     if (items.length === 0) return null;
@@ -139,6 +152,19 @@ export function TodayView({ now }: { now: Date }) {
         </Button>
       </div>
 
+      {isToday && overdueTodos.length > 0 && (
+        <section className="mb-5 rounded-2xl border border-danger/30 bg-danger-wash/50 p-4">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-danger">
+            <FlagIcon className="h-3.5 w-3.5" /> Overdue
+          </p>
+          <div className="space-y-1.5">
+            {overdueTodos.map((t) => (
+              <OverdueRow key={t.id} task={t} onNewDate={() => setFixId(t.id)} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {isToday && dueToday.length > 0 && (
         <section className="mb-5 rounded-2xl border border-danger/30 bg-danger-wash/50 p-4">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-danger">
@@ -173,7 +199,44 @@ export function TodayView({ now }: { now: Date }) {
         suggestions.length === 0 && (
           <div className="mt-6 text-center text-sm text-muted">You’re all done for today. ✦</div>
         )}
+
+      {fixTask && (
+        <NewDateModal task={fixTask} kind="due" now={now} onClose={() => setFixId(null)} />
+      )}
     </section>
+  );
+}
+
+/** One slipped to-do: what it was, how it slipped, and the two ways out. */
+function OverdueRow({ task, onNewDate }: { task: Task; onNewDate: () => void }) {
+  return (
+    <div className="rounded-xl border border-danger/25 bg-paper-card/70 px-3 py-2">
+      <button
+        type="button"
+        onClick={() => openEdit(task.id)}
+        className="flex w-full items-center gap-2.5 text-left text-sm"
+      >
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+        <span className="min-w-0 flex-1 truncate font-medium text-ink">{task.title}</span>
+        <span className="shrink-0 text-xs text-muted">
+          was due {dayLabel(new Date(task.dueDate!))}
+        </span>
+      </button>
+      <div className="mt-1.5 flex items-center gap-2 pl-4">
+        <Button size="sm" variant="secondary" onClick={onNewDate}>
+          New due date
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1.5 text-muted hover:text-accent"
+          onClick={() => dropTask(task.id)}
+        >
+          <TrashIcon className="h-3.5 w-3.5" />
+          Let it go
+        </Button>
+      </div>
+    </div>
   );
 }
 

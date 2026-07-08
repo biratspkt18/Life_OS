@@ -90,7 +90,7 @@ function LooseEndRow({ task }: { task: Task }) {
         <p className="mt-0.5 text-xs text-muted">
           {task.scheduledStart && (
             <>
-              was due {dayLabel(new Date(task.scheduledStart))} ·{" "}
+              was set for {dayLabel(new Date(task.scheduledStart))} ·{" "}
               {format(new Date(task.scheduledStart), "MMM d")}
               <span className="mx-1.5 text-muted-soft">·</span>
             </>

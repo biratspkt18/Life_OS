@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
-import { listEvents, type CalendarEvent } from "./calendar";
+import { eventExists, listEvents, type CalendarEvent } from "./calendar";
 import type { Importance, TodayItem } from "../types";
 
 type Row = typeof tasks.$inferSelect;
@@ -82,12 +82,20 @@ export async function getTodayItems(
 
   const existingIds = new Set(events.map((e) => e.id));
 
-  // Deletion sync: drop any in-window task whose Google event is gone.
+  // Deletion sync: drop an in-window task only when Google *confirms* its
+  // event is gone. Absence from the list is just a suspicion — the fetch may
+  // be truncated, the event may have been moved outside the window, or it may
+  // be too fresh to appear — so each suspect is checked individually with
+  // events.get, and anything uncertain is kept. Completed tasks are never
+  // reconcile-deleted: tidying an old event out of Google must not erase the
+  // record that the task happened.
   for (const t of db.select().from(tasks).all()) {
     if (!t.googleEventId || !t.scheduledStart) continue;
+    if (t.completed) continue;
     const s = new Date(t.scheduledStart);
     if (s < recStart || s > recEnd) continue;
-    if (!existingIds.has(t.googleEventId)) {
+    if (existingIds.has(t.googleEventId)) continue;
+    if ((await eventExists(t.googleEventId)) === false) {
       db.delete(tasks).where(eq(tasks.id, t.id)).run();
     }
   }

@@ -22,10 +22,20 @@ reminder scheduler.
 - **To-do list.** Not ready to schedule? Add a to-do with an optional **due
   date** and **preferred date**, then slot it onto a day later from the same
   free-time picker. (A preferred date is hidden once the deadline is today/
-  tomorrow, and can never fall after the due date.)
+  tomorrow, and can never fall after the due date. When you do schedule, the
+  slot picker **opens on the preferred day** so getting to it early takes no
+  extra taps.)
+- **Missed-date triage.** A to-do whose due or preferred date has already
+  passed floats to the top of the list in its own **"Missed due date"** /
+  **"Missed preferred date"** group (a task that missed both shows only under
+  *due*). The primary fix is a fresh date — one tap on a quick chip or a
+  calendar day in a small overlay saves instantly, no confirm step — and the
+  row leaves the Missed group the moment it's future-dated again.
 - **Deadlines on the calendar & Today.** To-do due dates show as a terracotta
   **deadline dot** on every month-grid day, a **"Due this day"** list on the
-  selected day, and a **"Due today"** section on the Today screen.
+  selected day, and a **"Due today"** section on the Today screen. To-dos whose
+  due date already slipped surface in an **Overdue strip** on Today with
+  one-tap **New due date** or **Let it go**, so nothing quietly rots.
 - **Edit & delete anywhere.** Every one of your own tasks carries a **⋯ menu**
   (edit · reschedule · delete, plus schedule/mark-done where relevant) — on
   Today, the Spotlight, the calendar day agenda, the to-do list, loose ends,
@@ -56,7 +66,10 @@ reminder scheduler.
   dead/expired token is detected automatically and prompts a reconnect instead
   of failing silently.
 - **Push reminders.** A ping a few minutes before each task, plus a morning
-  summary (web-push; works on desktop and installed mobile PWAs).
+  summary (web-push; works on desktop and installed mobile PWAs). The worker is
+  **sleep-tolerant**: a ping can still fire up to 15 minutes late (*"Was set for
+  9:00 — still doable?"*) if the machine was asleep, and the morning summary
+  catches up on wake instead of skipping the day.
 - **Loose ends.** A task whose time slips by unchecked drops out of the Today
   timeline and gathers in a calm **Loose ends** section, each with one-tap
   re-homing (mark done / find a time / edit / delete).
@@ -73,6 +86,11 @@ reminder scheduler.
   reveals, animated sheets and menus — and shadcn-style primitives themed to the
   palette. The Today list shows only the next 3 items (the timeline shows the
   rest) and day-browsing is bounded to ±7 days.
+- **Hard to break.** Every write to the API is **validated at runtime** before
+  it touches the database (a bad duration or `dueDate: "banana"` is rejected
+  with a 400, not stored to crash a render later), and each screen sits behind
+  an **error boundary** so one unrenderable row can never blank the whole app —
+  it shows a small "this screen hit a snag" card with a reload instead.
 
 ---
 
@@ -267,9 +285,10 @@ npm run worker       # run only the reminder worker
 npm run db:push      # apply the Drizzle schema to the SQLite file
 npm run typecheck    # tsc --noEmit
 npm test             # scheduling-brain test suite
-npm run clear-tasks      # wipe every task (see below)
-npm run seed-loose-ends  # add past, unchecked tasks for testing (see below)
-npm run seed-today       # add a realistic day of scheduled blocks (see below)
+npm run clear-tasks        # wipe every task (see below)
+npm run seed-loose-ends    # add past, unchecked tasks for testing (see below)
+npm run seed-missed-dates  # add to-dos with slipped due/preferred dates (see below)
+npm run seed-today         # add a realistic day of scheduled blocks (see below)
 ```
 
 ### Clear all tasks
@@ -388,7 +407,11 @@ Also SQLite-only (no calendar events). Clear with `npm run clear-tasks`.
   **deletions**: if a task's calendar event was deleted in Google, the task is
   removed from the database. This only runs when the Google fetch succeeds, so a
   transient outage never wipes tasks, and it keys off the event id, so *moving* an
-  event in Google reschedules rather than deletes.
+  event in Google reschedules rather than deletes. Two extra safety rails: the
+  event list **follows pagination** (a busy day can't truncate the list and look
+  like mass deletion), and before actually deleting a task the reconciler does a
+  **definitive `events.get`** on that one event — a task is dropped only when
+  Google confirms `404`/`410`, never on a mere absence from a list fetch.
 - **`lib/server/google.ts`** — stores the **refresh token** on connect; every
   calendar call refreshes the short-lived access token automatically (silent
   reconnect that survives restarts). If a call comes back `invalid_grant` (the
@@ -396,9 +419,25 @@ Also SQLite-only (no calendar events). Clear with `npm run clear-tasks`.
   flips to *disconnected* and prompts a reconnect rather than erroring silently.
   The OAuth **callback route is public** (an external redirect from Google can't
   carry the app session), guarded instead by its own `g_state` CSRF cookie.
-- **`worker/scheduler.ts`** — every minute, pings tasks about to start (once
-  each, via a `pingedAt` marker); daily at `MORNING_SUMMARY_HOUR`, sends a
-  summary. Both go out as web-push to every subscribed browser.
+- **`worker/scheduler.ts`** — one tick a minute drives everything. It pings
+  tasks about to start (once each, via a `pingedAt` marker) from a few minutes
+  before the start until **15 minutes after**, so a machine that slept through
+  the window still gets a "this was meant to start" nudge; and at
+  `MORNING_SUMMARY_HOUR` it sends the day's summary, tracked by a **marker file**
+  (not a fixed cron slot) so a worker that was down at 07:00 sends it on wake
+  instead of skipping the day. A re-entrancy guard stops a slow tick from
+  double-sending. Both notifications go out as web-push to every subscribed
+  browser.
+- **`lib/server/validate.ts`** — the runtime guard for every API write. Route
+  handlers used to cast `req.json()` straight to a typed shape (types are
+  compile-time only), so garbage like `durationMinutes: -60` flowed into SQLite
+  and crashed a later render. Now every user-supplied body is parsed and
+  bounds-checked here first; on failure the route returns **400 with the
+  reason**, and unknown keys are dropped rather than persisted.
+- **`components/NewDateModal.tsx` + `components/ErrorBoundary.tsx`** — the small
+  overlay that re-dates a slipped to-do in one tap (the Missed sections' primary
+  action), and a per-screen error boundary (keyed by view in the Shell) that
+  turns a render crash into a recoverable card instead of a blank app.
 
 ---
 
@@ -423,12 +462,14 @@ Also SQLite-only (no calendar events). Clear with `npm run clear-tasks`.
 ```
 app/             layout · page (Shell) · login · api/* route handlers
                  (api: tasks · today · range · settings · auth · google · push)
-components/       Shell · Capture (add/edit sheet) · Spotlight · TaskRow ·
-                 Checkbox · DayFeed · DoneToday · Timeline (overview/) ·
-                 RescheduleModal (free-slot picker) · RescheduleLoop ·
-                 LooseEndSuggestion · FreeSlotChips · ActionMenu (⋯ menu) ·
-                 ConnectPanel · ConnectPrompt · pickers (duration wheel, day) ·
-                 icons · ui/button (themed shadcn primitive)
+components/       Shell (error-boundary per screen) · Capture (add/edit sheet) ·
+                 Spotlight · TaskRow · Checkbox · DayFeed · DoneToday ·
+                 Timeline (overview/) · RescheduleModal (free-slot picker) ·
+                 SlotPicker (its slot grid) · RescheduleLoop · NewDateModal
+                 (one-tap re-date) · LooseEndSuggestion · FreeSlotChips ·
+                 ActionMenu (⋯ menu) · ConnectPanel · ConnectPrompt ·
+                 ErrorBoundary · pickers (duration wheel, day) · icons ·
+                 ui/button (themed shadcn primitive)
 views/            TodayView · CalendarView · InboxView (To-do) ·
                  LooseEndsView · SettingsView
 hooks/            useNow · useDb (SWR-backed) · useSuggestions
@@ -437,10 +478,11 @@ lib/
   types · dates · dayShape · freeSlots · schedule (the brain) · utils (cn)  (pure; shared)
   tasks (client API, optimistic) · client/push
   server/
-    db/{schema,index} · auth · settings · tasks · conflicts ·
-    google · calendar · today · range · push
+    db/{schema,index} · auth · settings · tasks · conflicts · validate
+    (runtime write guard) · google · calendar · today · range · push
 components.json                 shadcn config (themed to the Cue palette)
 worker/scheduler.ts             cron: per-task ping + morning summary
-scripts/          brain.test.mts · clear-tasks.mts · seed-loose-ends.mts · seed-today.mts
-public/sw.js · manifest.webmanifest
+scripts/          brain.test.mts · clear-tasks.mts · seed-loose-ends.mts ·
+                 seed-missed-dates.mts · seed-today.mts
+public/sw.js · manifest.webmanifest · favicon.svg
 ```

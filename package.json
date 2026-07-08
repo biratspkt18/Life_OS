@@ -7,11 +7,14 @@
   "scripts": {
     "dev": "concurrently -k -n next,cron -c blue,magenta \"next dev\" \"tsx watch worker/scheduler.ts\"",
     "build": "next build",
-    "start": "concurrently -k -n next,cron -c blue,magenta \"next start\" \"tsx worker/scheduler.ts\"",
+    "start": "concurrently -k -n next,cron -c blue,magenta \"next start -H 127.0.0.1\" \"tsx worker/scheduler.ts\"",
+    "start:web": "next start -H 127.0.0.1",
+    "start:worker": "tsx worker/scheduler.ts",
     "worker": "tsx watch worker/scheduler.ts",
     "db:push": "drizzle-kit push",
     "clear-tasks": "tsx scripts/clear-tasks.mts",
     "seed-loose-ends": "tsx scripts/seed-loose-ends.mts",
+    "seed-missed-dates": "tsx scripts/seed-missed-dates.mts",
     "seed-today": "tsx scripts/seed-today.mts",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/brain.test.mts"

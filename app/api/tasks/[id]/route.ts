@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { ConflictError, deleteTask, patchTask, type TaskPatch } from "@/lib/server/tasks";
+import { ConflictError, deleteTask, patchTask } from "@/lib/server/tasks";
+import { parseTaskPatch } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,9 +10,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const body = (await req.json().catch(() => ({}))) as TaskPatch;
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const parsed = parseTaskPatch(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
   try {
-    const task = await patchTask(id, body);
+    const task = await patchTask(id, parsed.value);
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json(task);
   } catch (err) {
