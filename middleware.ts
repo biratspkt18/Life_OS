@@ -20,9 +20,24 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith("/api")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  return NextResponse.redirect(url);
+  // Redirect unauthenticated page loads to /login on the PUBLIC origin.
+  //
+  // `req.nextUrl` reflects the address the app is bound to (127.0.0.1:3000)
+  // rather than the public host, so an absolute redirect built from it sends
+  // users to localhost. Next middleware also rejects a *relative* Location, so
+  // we reconstruct the real origin from, in order of trust:
+  //   1. APP_ORIGIN — the configured public URL (same source the OAuth redirect
+  //      uses); set in production, absent in local dev.
+  //   2. the reverse proxy's forwarded headers (Caddy sets X-Forwarded-Host /
+  //      -Proto), falling back to the raw Host header.
+  //   3. the request's own origin — correct for local dev with no proxy.
+  const forwardedHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const forwardedProto =
+    req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(/:$/, "");
+  const origin =
+    process.env.APP_ORIGIN ??
+    (forwardedHost ? `${forwardedProto}://${forwardedHost}` : req.nextUrl.origin);
+  return NextResponse.redirect(new URL("/login", origin));
 }
 
 export const config = {
