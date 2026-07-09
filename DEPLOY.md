@@ -142,8 +142,29 @@ npm run build   # next build
 > the worker runs through `tsx` — all live in `devDependencies`. A dev-omitted
 > install will fail to build or fail to start the worker.
 
+### 4a. Create the database schema — REQUIRED, do not skip
+
+```bash
+npm run db:push   # creates the four tables in data/lifeos.db
+```
+
+The app opens the SQLite file on boot (creating an **empty** `data/lifeos.db`),
+but it does **not** create the tables — `db:push` does. Skip this and the file
+exists but has no tables, so every write fails with `no such table: tasks`
+(and `settings`, `google_account`): the UI comes up empty, tasks won't save,
+and **Google Calendar silently fails to connect** (the OAuth callback can't
+persist the refresh token, so it never shows "Connected" and no events load).
+
+Confirm the four tables exist before starting PM2:
+
+```bash
+npm run db:push  # re-running is a no-op once the schema is present
+```
+
 The `data/` directory (holding `lifeos.db`) is created automatically on first
-run and is gitignored, so it is never touched by `git pull`.
+run and is gitignored, so it is never touched by `git pull`. **The schema is
+not** — run `npm run db:push` again after any pull that changes
+`lib/server/db/schema.ts`.
 
 > **Database path — important assumption.** `DB_PATH=data/lifeos.db` is
 > *relative to the repo root*, so your live data lives at `~/life-os/data/`.
@@ -198,6 +219,7 @@ From `~/life-os` on the droplet:
 ```bash
 git pull
 npm ci            # only strictly needed if dependencies changed, but safe
+npm run db:push   # apply any schema changes (no-op if none) — safe to always run
 npm run build
 pm2 restart ecosystem.config.cjs   # or: pm2 restart all
 ```
