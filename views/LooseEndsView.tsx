@@ -9,6 +9,7 @@ import { openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
 import { ActionMenu } from "../components/ActionMenu";
 import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import { Celebration } from "../components/Celebration";
 import type { Task } from "../lib/types";
 
 /**
@@ -30,10 +31,7 @@ export function LooseEndsView({ now }: { now: Date }) {
       </header>
 
       {tasks.length === 0 ? (
-        <div className="surface px-6 py-12 text-center">
-          <p className="text-lg font-medium text-ink">All caught up ✦</p>
-          <p className="mt-1 text-sm text-muted">Nothing slipped past. Nice.</p>
-        </div>
+        <Celebration title="All tied up." sub="Nothing slipped past. Nice." />
       ) : (
         <div className="space-y-2.5">
           <AnimatePresence initial={false}>

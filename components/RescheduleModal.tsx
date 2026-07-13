@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useAllTasks, useExternalBusy, useSettings } from "../hooks/useDb";
 import { ConflictError, rescheduleTask, updateTask } from "../lib/tasks";
 import type { Task } from "../lib/types";
@@ -38,6 +38,7 @@ export function openReschedule(taskId: string) {
 export function RescheduleHost({ now }: { now: Date }) {
   const [taskId, setTaskId] = useState<string | null>(null);
   const tasks = useAllTasks();
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     function onOpen(e: Event) {
@@ -71,30 +72,32 @@ export function RescheduleHost({ now }: { now: Date }) {
         onClick={close}
       />
       <motion.div
-        className="surface relative z-10 w-full max-w-md rounded-b-none rounded-t-2xl p-5 sm:m-4 sm:rounded-2xl"
-        initial={{ y: 24, opacity: 0, scale: 0.98 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
+        className="surface relative z-10 flex max-h-[min(85dvh,38rem)] w-full max-w-md flex-col overflow-hidden rounded-b-none rounded-t-2xl sm:m-4 sm:rounded-2xl"
+        initial={reduceMotion ? { opacity: 0 } : { y: 24, opacity: 0, scale: 0.98 }}
+        animate={reduceMotion ? { opacity: 1 } : { y: 0, opacity: 1, scale: 1 }}
         transition={{ type: "spring", stiffness: 380, damping: 32 }}
       >
-        <div className="mb-1 flex items-start justify-between">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">{heading}</h2>
-          <button
-            onClick={close}
-            className="-mr-1.5 -mt-1 rounded-lg p-1.5 text-muted-soft transition-colors hover:bg-paper-edge/60 hover:text-ink"
-            aria-label="Close"
-          >
-            <CloseIcon className="h-5 w-5" />
-          </button>
+        <div className="shrink-0 px-5 pt-5">
+          <div className="mb-1 flex items-start justify-between">
+            <h2 className="font-display text-lg font-bold tracking-tight text-ink">{heading}</h2>
+            <button
+              onClick={close}
+              className="-mr-1.5 -mt-1 rounded-lg p-1.5 text-muted-soft transition-colors hover:bg-paper-edge/60 hover:text-ink"
+              aria-label="Close"
+            >
+              <CloseIcon className="h-5 w-5" />
+            </button>
+          </div>
+          <p className="text-sm font-medium text-ink">{task.title}</p>
+          <p className="mb-3 text-xs text-muted">
+            {durationLabel(task.durationMinutes)}
+            <span className="mx-1.5 text-muted-soft">·</span>
+            {task.completed ? "when did you get to it?" : "tap a time you're free"}
+            {task.dueDate && !task.completed && (
+              <span className="text-accent"> · due {dayLabel(new Date(task.dueDate))}</span>
+            )}
+          </p>
         </div>
-        <p className="text-sm font-medium text-ink">{task.title}</p>
-        <p className="mb-4 text-xs text-muted">
-          {durationLabel(task.durationMinutes)}
-          <span className="mx-1.5 text-muted-soft">·</span>
-          {task.completed ? "when did you get to it?" : "tap a time you're free"}
-          {task.dueDate && !task.completed && (
-            <span className="text-accent"> · due {dayLabel(new Date(task.dueDate))}</span>
-          )}
-        </p>
         {/* Keyed by task id so the picker resets each time it's reopened. */}
         <SlotPicker key={task.id} task={task} now={now} onDone={close} />
       </motion.div>
@@ -234,7 +237,7 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
 
   if (availableDays.length === 0) {
     return (
-      <p className="rounded-2xl border border-dashed border-paper-edge bg-paper-deep/30 px-4 py-6 text-center text-sm text-muted">
+      <p className="mx-5 mb-[max(1.25rem,env(safe-area-inset-bottom))] rounded-2xl border border-dashed border-paper-edge bg-paper-deep/30 px-4 py-6 text-center text-sm text-muted sm:mb-5">
         No open time that fits in the next {HORIZON_DAYS} days. Try a shorter estimate, or widen
         your day windows in Settings.
       </p>
@@ -242,9 +245,9 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
   }
 
   return (
-    <div className="space-y-4">
-      {/* Day selector — only days that actually have room. */}
-      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Day selector — only days that actually have room. Stays put while slots scroll. */}
+      <div className="flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-2 pt-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {availableDays.map((day) => {
           const active = !!activeDay && isSameDay(day, activeDay);
           return (
@@ -279,14 +282,15 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
         })}
       </div>
 
-      {/* Free slots on the chosen day, grouped by part of day. */}
-      <div className="space-y-3">
+      {/* Free slots on the chosen day — the only region that scrolls, so the
+          day rail above and the confirm bar below never leave the screen. */}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-5 pb-3">
         {buckets.map((bucket) => (
           <div key={bucket.label}>
-            <p className="mb-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-soft">
+            <p className="sticky top-0 z-10 -mx-5 bg-paper-card px-5 pb-1.5 pt-1 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-soft">
               {bucket.label}
             </p>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
               {bucket.slots.map((s) => {
                 const on = !!activeSlot && s.getTime() === activeSlot.getTime();
                 return (
@@ -297,7 +301,7 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
                     onClick={() => setPickedSlot(s)}
                     aria-pressed={on}
                     className={cn(
-                      "rounded-xl border px-3 py-2 text-sm font-medium tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40",
+                      "rounded-xl border px-1 py-2.5 text-center text-sm font-medium tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40",
                       on
                         ? "border-accent bg-accent text-white shadow-accent"
                         : "border-paper-edge bg-paper-card text-ink hover:border-accent/50 hover:bg-accent-wash",
@@ -312,10 +316,9 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
         ))}
       </div>
 
-      {error && <p className="text-xs font-medium text-accent">{error}</p>}
-
-      <div className="flex items-center justify-between gap-3 border-t border-paper-edge pt-3">
-        <p className="min-w-0 text-xs text-muted">
+      <div className="shrink-0 space-y-2.5 border-t border-paper-edge px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 sm:pb-5">
+        {error && <p className="text-xs font-medium text-accent">{error}</p>}
+        <p className="text-xs text-muted">
           {activeSlot ? (
             <>
               <span className="text-muted-soft">Schedules for </span>
@@ -327,11 +330,11 @@ function SlotPicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
             "Pick a slot"
           )}
         </p>
-        <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" onClick={onDone}>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onDone} className="flex-none">
             Cancel
           </Button>
-          <Button onClick={confirm} disabled={!activeSlot || saving}>
+          <Button onClick={confirm} disabled={!activeSlot || saving} className="flex-1">
             {saving ? "Scheduling…" : task.completed ? "Log it" : "Schedule"}
           </Button>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useDayItems, useInboxTasks, useSettings } from "../hooks/useDb";
+import { useDayItems, useInboxTasks, usePastUndoneTasks, useSettings } from "../hooks/useDb";
 import { useFittingSuggestions } from "../hooks/useSuggestions";
 import { windowForDay } from "../lib/types";
 import type { Task } from "../lib/types";
@@ -24,6 +24,7 @@ import { openCapture, openEdit } from "../components/Capture";
 import { dropTask } from "../lib/tasks";
 import { FlagIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { Button } from "../components/ui/button";
+import { Celebration } from "../components/Celebration";
 
 /** You can browse at most this many days on either side of today. */
 const DAY_RANGE = 7;
@@ -84,6 +85,18 @@ export function TodayView({ now }: { now: Date }) {
   }, [inboxTodos, today]);
   const [fixId, setFixId] = useState<string | null>(null);
   const fixTask = fixId ? overdueTodos.find((t) => t.id === fixId) ?? null : null;
+
+  // The day is finished: it held real work and none of it is left. When the
+  // to-do list and loose ends are empty too, that's the rare everything-clear
+  // moment — the biggest (still calm) pop the app has.
+  const looseEnds = usePastUndoneTasks(now);
+  const dayDone =
+    isToday &&
+    items.length > 0 &&
+    groups.toGoCount === 0 &&
+    groups.upcoming.length === 0 &&
+    suggestions.length === 0;
+  const allClear = dayDone && inboxTodos.length === 0 && looseEnds.length === 0;
 
   const countLabel = useMemo(() => {
     if (items.length === 0) return null;
@@ -192,13 +205,26 @@ export function TodayView({ now }: { now: Date }) {
 
       {isToday && <DoneToday items={items} now={now} />}
 
-      {isToday &&
-        items.length > 0 &&
-        groups.toGoCount === 0 &&
-        groups.upcoming.length === 0 &&
-        suggestions.length === 0 && (
-          <div className="mt-6 text-center text-sm text-muted">You’re all done for today. ✦</div>
-        )}
+      {allClear ? (
+        <Celebration
+          className="mt-6"
+          big
+          pop
+          title="Completely clear."
+          sub="Today’s done, the list is empty, nothing slipped past. Right now you owe the day nothing."
+        />
+      ) : dayDone ? (
+        <Celebration
+          className="mt-6"
+          pop
+          title="That’s the day, done."
+          sub={
+            now.getHours() >= 17
+              ? "Every block checked off. Enjoy your evening."
+              : "Every block checked off — the rest of the day is yours."
+          }
+        />
+      ) : null}
 
       {fixTask && (
         <NewDateModal task={fixTask} kind="due" now={now} onClose={() => setFixId(null)} />

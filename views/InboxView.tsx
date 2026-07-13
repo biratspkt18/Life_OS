@@ -13,6 +13,7 @@ import { Checkbox } from "../components/Checkbox";
 import { Button } from "../components/ui/button";
 import { ImportanceMark } from "../components/pickers";
 import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import { Celebration } from "../components/Celebration";
 import type { Task } from "../lib/types";
 
 type MissedKind = "due" | "preferred";
@@ -86,12 +87,11 @@ export function InboxView({ now }: { now: Date }) {
       </button>
 
       {sorted.length === 0 ? (
-        <div className="surface px-6 py-12 text-center">
-          <p className="text-lg font-medium text-ink">Nothing to do ✦</p>
-          <p className="mt-1 text-sm text-muted">
-            Add a to-do whenever something lands — no rush to schedule it.
-          </p>
-        </div>
+        <Celebration
+          icon="spark"
+          title="Nothing waiting."
+          sub="Add a to-do whenever something lands — no rush to schedule it."
+        />
       ) : (
         <div className="space-y-6">
           {groups.missedDue.length > 0 && (
