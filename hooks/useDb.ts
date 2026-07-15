@@ -167,6 +167,34 @@ export function useInboxTasks(): Task[] {
   );
 }
 
+/** A to-do whose date slipped: which date missed, and the day it was meant for. */
+export interface MissedTodo {
+  task: Task;
+  missed: "due" | "preferred";
+  when: Date;
+}
+
+/**
+ * Inbox to-dos whose due or preferred date is in the past — loose ends now.
+ * A slipped due date outranks a slipped preferred date, matching the old
+ * To-do-screen triage. Sorted most-slipped first.
+ */
+export function useMissedTodos(now: Date): MissedTodo[] {
+  const inbox = useInboxTasks();
+  const dayKey = startOfDay(now).getTime();
+  return useMemo(() => {
+    const out: MissedTodo[] = [];
+    for (const task of inbox) {
+      const due = task.dueDate ? startOfDay(new Date(task.dueDate)) : null;
+      const preferred = task.preferredDate ? startOfDay(new Date(task.preferredDate)) : null;
+      if (due && due.getTime() < dayKey) out.push({ task, missed: "due", when: due });
+      else if (preferred && preferred.getTime() < dayKey)
+        out.push({ task, missed: "preferred", when: preferred });
+    }
+    return out.sort((a, b) => a.when.getTime() - b.when.getTime());
+  }, [inbox, dayKey]);
+}
+
 /** Undone past tasks the reschedule loop collects: past start, not completed. */
 export function usePastUndoneTasks(now: Date): Task[] {
   const all = useAllTasks();

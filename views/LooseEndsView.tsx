@@ -1,52 +1,118 @@
 "use client";
+import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { usePastUndoneTasks } from "../hooks/useDb";
+import { useMissedTodos, usePastUndoneTasks } from "../hooks/useDb";
 import { useCheckOff } from "../hooks/useCheckOff";
 import { dropTask } from "../lib/tasks";
 import { dayLabel, durationLabel, format } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
 import { openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
+import { NewDateModal } from "../components/NewDateModal";
 import { ActionMenu } from "../components/ActionMenu";
-import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import { CalendarIcon, ClockIcon, EditIcon, TrashIcon } from "../components/icons";
 import { Celebration } from "../components/Celebration";
 import type { Task } from "../lib/types";
 
+type MissedKind = "due" | "preferred";
+
+/** One entry on the screen: a slipped scheduled task, or a to-do that missed its date. */
+interface LooseEnd {
+  task: Task;
+  /** Set when this is a to-do whose due/preferred date slipped (not a scheduled task). */
+  missed?: MissedKind;
+  /** The moment it slipped past — scheduled start, or the missed date. Sorts the list. */
+  when: Date;
+}
+
 /**
- * Loose ends — past tasks that slipped by. No guilt: check off what's done,
- * re-home what still matters, let the rest go. The full list lives here (the
- * Today screen only nudges one at a time). Mirrors Cue's Loose ends screen.
+ * Loose ends — everything that slipped past: scheduled tasks that went
+ * unchecked *and* to-dos whose due or preferred date is gone. This is the only
+ * place they gather (the Today screen just nudges what fits into open room).
+ * No guilt: check off what's done, re-home what still matters, let the rest go.
  */
 export function LooseEndsView({ now }: { now: Date }) {
-  const tasks = usePastUndoneTasks(now);
+  const slipped = usePastUndoneTasks(now);
+  const missed = useMissedTodos(now);
+  const [fix, setFix] = useState<{ id: string; kind: MissedKind } | null>(null);
+
+  // One list, most-slipped first. A task is never in both sources: slipped ones
+  // have a scheduledStart, missed to-dos never do.
+  const ends = useMemo<LooseEnd[]>(
+    () =>
+      [
+        ...slipped.map((task) => ({ task, when: new Date(task.scheduledStart!) })),
+        ...missed.map((m) => ({ task: m.task, missed: m.missed, when: m.when })),
+      ].sort((a, b) => a.when.getTime() - b.when.getTime()),
+    [slipped, missed],
+  );
+
+  const fixEnd = fix ? ends.find((e) => e.task.id === fix.id) ?? null : null;
 
   return (
     <section>
       <header className="mb-5">
         <h1 className="text-3xl font-bold tracking-tight text-ink">Loose ends</h1>
         <p className="mt-1 text-[0.95rem] leading-relaxed text-muted">
-          Tasks from the past that didn’t happen. No guilt here — pick what still matters and let the
-          rest go.
+          Tasks and to-dos from the past that didn’t happen. No guilt here — pick what still
+          matters and let the rest go.
         </p>
       </header>
 
-      {tasks.length === 0 ? (
+      {ends.length === 0 ? (
         <Celebration title="All tied up." sub="Nothing slipped past. Nice." />
       ) : (
         <div className="space-y-2.5">
           <AnimatePresence initial={false}>
-            {tasks.map((t) => (
-              <LooseEndRow key={t.id} task={t} />
+            {ends.map((e) => (
+              <LooseEndRow
+                key={e.task.id}
+                end={e}
+                onNewDate={e.missed ? () => setFix({ id: e.task.id, kind: e.missed! }) : undefined}
+              />
             ))}
           </AnimatePresence>
         </div>
+      )}
+
+      {fix && fixEnd && (
+        <NewDateModal task={fixEnd.task} kind={fix.kind} now={now} onClose={() => setFix(null)} />
       )}
     </section>
   );
 }
 
-function LooseEndRow({ task }: { task: Task }) {
+function LooseEndRow({ end, onNewDate }: { end: LooseEnd; onNewDate?: () => void }) {
+  const { task, missed, when } = end;
   const { checked, celebrating, toggle } = useCheckOff(task.id, task.completed);
+
+  const actions = [
+    {
+      label: "Find a time",
+      icon: <ClockIcon className="h-4 w-4" />,
+      onClick: () => openReschedule(task.id),
+    },
+    ...(onNewDate
+      ? [
+          {
+            label: missed === "due" ? "New due date" : "New preferred date",
+            icon: <CalendarIcon className="h-4 w-4" />,
+            onClick: onNewDate,
+          },
+        ]
+      : []),
+    {
+      label: "Edit",
+      icon: <EditIcon className="h-4 w-4" />,
+      onClick: () => openEdit(task.id),
+    },
+    {
+      label: "Delete",
+      icon: <TrashIcon className="h-4 w-4" />,
+      danger: true,
+      onClick: () => dropTask(task.id),
+    },
+  ];
 
   return (
     <motion.div
@@ -86,37 +152,22 @@ function LooseEndRow({ task }: { task: Task }) {
           {task.title}
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          {task.scheduledStart && (
+          {missed ? (
             <>
-              was set for {dayLabel(new Date(task.scheduledStart))} ·{" "}
-              {format(new Date(task.scheduledStart), "MMM d")}
-              <span className="mx-1.5 text-muted-soft">·</span>
+              {missed === "due" ? "was due" : "aimed for"} {dayLabel(when)} ·{" "}
+              {format(when, "MMM d")}
+            </>
+          ) : (
+            <>
+              was set for {dayLabel(when)} · {format(when, "MMM d")}
             </>
           )}
-          ~{durationLabel(task.durationMinutes)}
+          <span className="mx-1.5 text-muted-soft">·</span>~
+          {durationLabel(task.durationMinutes)}
         </p>
       </div>
       <div className="relative z-10 flex shrink-0 items-center">
-        <ActionMenu
-          actions={[
-            {
-              label: "Find a time",
-              icon: <ClockIcon className="h-4 w-4" />,
-              onClick: () => openReschedule(task.id),
-            },
-            {
-              label: "Edit",
-              icon: <EditIcon className="h-4 w-4" />,
-              onClick: () => openEdit(task.id),
-            },
-            {
-              label: "Delete",
-              icon: <TrashIcon className="h-4 w-4" />,
-              danger: true,
-              onClick: () => dropTask(task.id),
-            },
-          ]}
-        />
+        <ActionMenu actions={actions} />
       </div>
     </motion.div>
   );

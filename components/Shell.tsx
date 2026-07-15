@@ -2,7 +2,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import useSWR from "swr";
 import { useNow } from "../hooks/useNow";
-import { useInboxTasks, usePastUndoneTasks } from "../hooks/useDb";
+import { useInboxTasks, useMissedTodos, usePastUndoneTasks } from "../hooks/useDb";
 import { TodayView } from "../views/TodayView";
 import { CalendarView } from "../views/CalendarView";
 import { InboxView } from "../views/InboxView";
@@ -29,11 +29,14 @@ export default function Shell() {
   const now = useNow();
   const [view, setView] = useState<View>("today");
 
+  // Missed to-dos count as loose ends (they render there, not in To-do), so
+  // both tab badges match what their screens actually show.
   const inbox = useInboxTasks();
   const loose = usePastUndoneTasks(now);
+  const missed = useMissedTodos(now);
   const badges: Partial<Record<View, number>> = {
-    inbox: inbox.length,
-    loose: loose.length,
+    inbox: inbox.length - missed.length,
+    loose: loose.length + missed.length,
   };
 
   // Register the service worker so the app is installable (and ready for push).
