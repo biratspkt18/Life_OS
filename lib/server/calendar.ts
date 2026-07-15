@@ -21,10 +21,11 @@ export interface CalendarEvent {
  * transient outage never wipes tasks.
  */
 export async function listEvents(
+  userId: string,
   timeMinISO: string,
   timeMaxISO: string,
 ): Promise<CalendarEvent[] | null> {
-  const c = await getCalendarClient();
+  const c = await getCalendarClient(userId);
   if (!c) return null;
   const items = [];
   try {
@@ -49,7 +50,7 @@ export async function listEvents(
     // A dead refresh token will never recover — drop it so the app switches to
     // "disconnected" and prompts a reconnect (rather than erroring every request).
     if (isInvalidGrant(err)) {
-      invalidateGoogleTokens();
+      invalidateGoogleTokens(userId);
       return null;
     }
     throw err; // genuine/transient error — bubble up so callers don't wipe tasks.
@@ -78,8 +79,11 @@ export async function listEvents(
  * `events.get` answers for the event itself. Any uncertainty (network error,
  * not connected) returns "unknown" so callers keep the task.
  */
-export async function eventExists(eventId: string): Promise<boolean | "unknown"> {
-  const c = await getCalendarClient();
+export async function eventExists(
+  userId: string,
+  eventId: string,
+): Promise<boolean | "unknown"> {
+  const c = await getCalendarClient(userId);
   if (!c) return "unknown";
   try {
     const res = await c.calendar.events.get({ calendarId: c.calendarId, eventId });
@@ -89,7 +93,7 @@ export async function eventExists(eventId: string): Promise<boolean | "unknown">
       (err as { response?: { status?: number } }).response?.status ??
       (err as { code?: number }).code;
     if (status === 404 || status === 410) return false;
-    if (isInvalidGrant(err)) invalidateGoogleTokens();
+    if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     return "unknown";
   }
 }
@@ -109,9 +113,9 @@ function eventBody(task: Task) {
 }
 
 /** Create an event for a scheduled task; returns the Google event id, or null. */
-export async function createEvent(task: Task): Promise<string | null> {
+export async function createEvent(userId: string, task: Task): Promise<string | null> {
   if (!task.scheduledStart) return null;
-  const c = await getCalendarClient();
+  const c = await getCalendarClient(userId);
   if (!c) return null;
   try {
     const res = await c.calendar.events.insert({
@@ -120,15 +124,15 @@ export async function createEvent(task: Task): Promise<string | null> {
     });
     return res.data.id ?? null;
   } catch (err) {
-    if (isInvalidGrant(err)) invalidateGoogleTokens();
+    if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     console.error("[calendar] create failed:", err);
     return null;
   }
 }
 
-export async function updateEvent(task: Task): Promise<void> {
+export async function updateEvent(userId: string, task: Task): Promise<void> {
   if (!task.googleEventId || !task.scheduledStart) return;
-  const c = await getCalendarClient();
+  const c = await getCalendarClient(userId);
   if (!c) return;
   try {
     await c.calendar.events.patch({
@@ -137,18 +141,18 @@ export async function updateEvent(task: Task): Promise<void> {
       requestBody: eventBody(task),
     });
   } catch (err) {
-    if (isInvalidGrant(err)) invalidateGoogleTokens();
+    if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     console.error("[calendar] update failed:", err);
   }
 }
 
-export async function deleteEvent(eventId: string): Promise<void> {
-  const c = await getCalendarClient();
+export async function deleteEvent(userId: string, eventId: string): Promise<void> {
+  const c = await getCalendarClient(userId);
   if (!c) return;
   try {
     await c.calendar.events.delete({ calendarId: c.calendarId, eventId });
   } catch (err) {
-    if (isInvalidGrant(err)) invalidateGoogleTokens();
+    if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     // 404/410 = already gone; anything else we just log.
     console.error("[calendar] delete failed:", err);
   }
@@ -158,18 +162,18 @@ export async function deleteEvent(eventId: string): Promise<void> {
  * Reconcile a task's calendar event to match its current state.
  * Returns the event id to persist (possibly new, or null if removed/none).
  */
-export async function syncEvent(task: Task): Promise<string | null> {
+export async function syncEvent(userId: string, task: Task): Promise<string | null> {
   const hasSlot = !!task.scheduledStart;
   if (hasSlot) {
     if (task.googleEventId) {
-      await updateEvent(task);
+      await updateEvent(userId, task);
       return task.googleEventId;
     }
-    return await createEvent(task);
+    return await createEvent(userId, task);
   }
   // No slot → remove any existing event.
   if (task.googleEventId) {
-    await deleteEvent(task.googleEventId);
+    await deleteEvent(userId, task.googleEventId);
   }
   return null;
 }

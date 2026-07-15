@@ -50,7 +50,7 @@ function GoogleRow() {
         </button>
       ) : (
         // Full navigation (not fetch) so Google's consent page loads.
-        <a href="/api/google/connect" className="btn-primary px-3 py-1.5 text-sm">
+        <a href="/api/auth/google" className="btn-primary px-3 py-1.5 text-sm">
           Connect
         </a>
       )}

@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { listEvents, type CalendarEvent } from "./calendar";
@@ -38,6 +39,7 @@ function byStart(a: TodayItem, b: TodayItem): number {
  * Falls back to app tasks only when Google isn't connected or can't be reached.
  */
 export async function getRangeItems(
+  userId: string,
   rangeStartISO: string,
   rangeEndISO: string,
 ): Promise<TodayItem[]> {
@@ -47,6 +49,7 @@ export async function getRangeItems(
   const appItems = db
     .select()
     .from(tasks)
+    .where(eq(tasks.userId, userId))
     .all()
     .filter((t) => {
       if (!t.scheduledStart) return false;
@@ -57,7 +60,7 @@ export async function getRangeItems(
 
   let events: CalendarEvent[] | null;
   try {
-    events = await listEvents(rangeStartISO, rangeEndISO);
+    events = await listEvents(userId, rangeStartISO, rangeEndISO);
   } catch (err) {
     console.error("[range] listEvents failed; app tasks only:", err);
     return appItems.sort(byStart);

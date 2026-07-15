@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { eventExists, listEvents, type CalendarEvent } from "./calendar";
@@ -43,6 +43,7 @@ function byStart(a: TodayItem, b: TodayItem): number {
  * the same id, so reschedules in Google don't trigger a delete.
  */
 export async function getTodayItems(
+  userId: string,
   dayStartISO: string,
   dayEndISO: string,
 ): Promise<TodayItem[]> {
@@ -53,6 +54,7 @@ export async function getTodayItems(
     db
       .select()
       .from(tasks)
+      .where(eq(tasks.userId, userId))
       .all()
       .filter((t) => {
         if (!t.scheduledStart) return false;
@@ -68,7 +70,7 @@ export async function getTodayItems(
 
   let events: CalendarEvent[] | null;
   try {
-    events = await listEvents(recStart.toISOString(), recEnd.toISOString());
+    events = await listEvents(userId, recStart.toISOString(), recEnd.toISOString());
   } catch (err) {
     // Couldn't reach Google — show app tasks only, do NOT reconcile/delete.
     console.error("[today] listEvents failed; skipping reconcile:", err);
@@ -89,14 +91,14 @@ export async function getTodayItems(
   // events.get, and anything uncertain is kept. Completed tasks are never
   // reconcile-deleted: tidying an old event out of Google must not erase the
   // record that the task happened.
-  for (const t of db.select().from(tasks).all()) {
+  for (const t of db.select().from(tasks).where(eq(tasks.userId, userId)).all()) {
     if (!t.googleEventId || !t.scheduledStart) continue;
     if (t.completed) continue;
     const s = new Date(t.scheduledStart);
     if (s < recStart || s > recEnd) continue;
     if (existingIds.has(t.googleEventId)) continue;
-    if ((await eventExists(t.googleEventId)) === false) {
-      db.delete(tasks).where(eq(tasks.id, t.id)).run();
+    if ((await eventExists(userId, t.googleEventId)) === false) {
+      db.delete(tasks).where(and(eq(tasks.id, t.id), eq(tasks.userId, userId))).run();
     }
   }
 

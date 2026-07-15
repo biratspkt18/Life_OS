@@ -35,7 +35,7 @@ How to tutor me:
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Life OS is a single-user, scheduling-first task manager: a Next.js (App Router) app over a SQLite/Drizzle backend, with two-way Google Calendar sync and web-push reminders. See `README.md` for the full feature list, Google/VAPID setup, and troubleshooting.
+Life OS is a multi-user, scheduling-first task manager: a Next.js (App Router) app over a SQLite/Drizzle backend, with Google sign-in, two-way Google Calendar sync, and web-push reminders. All data is scoped per user. See `README.md` for the full feature list, Google/VAPID setup, and troubleshooting.
 
 ## Commands
 
@@ -56,7 +56,7 @@ There is no single-test runner or lint step — `npm test` runs the whole brain 
 
 ## Critical conventions
 
-- **`.env` is read once at startup.** After editing Google/VAPID/scheduler vars, restart `npm run dev` — a running server won't pick them up. Minimum to boot: `APP_PASSCODE` + `COOKIE_SECRET`; Google and push are optional and degrade gracefully when unset.
+- **`.env` is read once at startup.** After editing Google/VAPID/scheduler vars, restart `npm run dev` — a running server won't pick them up. Minimum to boot: `COOKIE_SECRET` + `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` (login is Google-only, so the app is unusable without them); push is optional and degrades gracefully when unset.
 - **Two dev processes must run together.** `npm run dev` runs Next *and* `worker/scheduler.ts` via `concurrently`. Reminders/summaries only fire when the worker is up; the app works without it.
 - **Import alias `@/*` maps to the repo root** (`tsconfig.json` paths). Prefer it for cross-directory imports.
 - **`strict`, `noUnusedLocals`, and `noUnusedParameters` are all on.** Unused bindings fail `typecheck`.
@@ -71,9 +71,9 @@ There is no single-test runner or lint step — `npm test` runs the whole brain 
 - `lib/server/*.ts` — **server-only** (DB access via `db/`, Google, push, auth). Never import these into client components.
 - `lib/tasks.ts` — the **client** API layer: mutations are **optimistic**, then revalidate. Any task can appear in three SWR caches, so a mutation must invalidate all three: `/api/tasks`, `/api/today`, `/api/range`.
 
-**The whole task/to-do distinction is one nullable column:** a `tasks` row with a `scheduledStart` is a calendar block; without one it's an unscheduled to-do. Data model is four tables in `lib/server/db/schema.ts` (`tasks`, `settings` [single JSON row], `googleAccount` [single row, refresh token], `pushSubscriptions`).
+**The whole task/to-do distinction is one nullable column:** a `tasks` row with a `scheduledStart` is a calendar block; without one it's an unscheduled to-do. Data model is five tables in `lib/server/db/schema.ts` (`users`, `tasks`, `settings` [one JSON row per user], `googleAccount` [one row per user, refresh token], `pushSubscriptions`) — everything but `users` carries a `userId`.
 
-**Auth:** passcode → signed httpOnly cookie (`jose`). `middleware.ts` gates everything except the `PUBLIC` list. `/api/google/callback` is intentionally public — it's an external redirect from Google that can't carry the session, so it's guarded by its own `g_state` CSRF cookie instead.
+**Auth:** Google OAuth sign-in → `users` row (matched by `google_sub`, falling back to email adoption) → signed httpOnly session cookie carrying the user id (`jose`). Route handlers get the caller via `requireUserId()` (`lib/server/session.ts`); every DB query is scoped by `userId`. `middleware.ts` gates everything except the `PUBLIC` list. `/api/google/callback` is intentionally public — it's an external redirect from Google that can't carry the session, so it's guarded by its own `g_state` CSRF cookie instead.
 
 **Google sync is best-effort and never destructive on failure.** `/api/tasks` writes SQLite first, then mirrors to Calendar (`lib/server/calendar.ts`); if Google is down the task still saves. `lib/server/google.ts` stores the refresh token and silently refreshes access tokens; on a permanent `invalid_grant` it drops the credentials so the app flips to *disconnected* rather than erroring. `/api/today` (`lib/server/today.ts`) merges tasks with live Google events and reconciles deletions **only when the Google fetch succeeds**, so a transient outage never wipes tasks.
 

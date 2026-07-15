@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import * as calendar from "./calendar";
@@ -35,12 +35,18 @@ function toTask(r: Row): Task {
   };
 }
 
-export function listTasks(): Task[] {
-  return db.select().from(tasks).all().map(toTask);
+export function listTasks(userId: string): Task[] {
+  return db.select().from(tasks).where(eq(tasks.userId, userId)).all().map(toTask);
 }
 
-function getRow(id: string): Row | undefined {
-  return db.select().from(tasks).where(eq(tasks.id, id)).get();
+/** One row, scoped to its owner — a wrong (or forged) id from another user
+ *  simply returns undefined, so every caller is a 404 rather than a leak. */
+function getRow(userId: string, id: string): Row | undefined {
+  return db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId)))
+    .get();
 }
 
 export interface NewTaskInput {
@@ -52,12 +58,12 @@ export interface NewTaskInput {
   preferredDate?: string | null;
 }
 
-export async function createTask(input: NewTaskInput): Promise<Task> {
+export async function createTask(userId: string, input: NewTaskInput): Promise<Task> {
   const now = new Date().toISOString();
 
   // Never let a new task land on top of an existing task or calendar event.
   if (input.scheduledStart) {
-    const conflict = await findConflict(input.scheduledStart, input.durationMinutes);
+    const conflict = await findConflict(userId, input.scheduledStart, input.durationMinutes);
     if (conflict) throw new ConflictError(conflict);
   }
 
@@ -75,12 +81,15 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(tasks).values({ ...task, pingedAt: null }).run();
+  db.insert(tasks).values({ ...task, userId, pingedAt: null }).run();
 
-  const eventId = await calendar.createEvent(task);
+  const eventId = await calendar.createEvent(userId, task);
   if (eventId) {
     task.googleEventId = eventId;
-    db.update(tasks).set({ googleEventId: eventId }).where(eq(tasks.id, task.id)).run();
+    db.update(tasks)
+      .set({ googleEventId: eventId })
+      .where(and(eq(tasks.id, task.id), eq(tasks.userId, userId)))
+      .run();
   }
   return task;
 }
@@ -99,8 +108,12 @@ export type TaskPatch = Partial<
   >
 >;
 
-export async function patchTask(id: string, patch: TaskPatch): Promise<Task | null> {
-  const existing = getRow(id);
+export async function patchTask(
+  userId: string,
+  id: string,
+  patch: TaskPatch,
+): Promise<Task | null> {
+  const existing = getRow(userId, id);
   if (!existing) return null;
 
   const now = new Date().toISOString();
@@ -129,12 +142,12 @@ export async function patchTask(id: string, patch: TaskPatch): Promise<Task | nu
   // (logging it at a different time must still land somewhere free). A plain
   // complete-in-place doesn't move the slot, so it skips this.
   if (merged.scheduledStart && (rescheduled || durationChanged)) {
-    const conflict = await findConflict(merged.scheduledStart, merged.durationMinutes, id);
+    const conflict = await findConflict(userId, merged.scheduledStart, merged.durationMinutes, id);
     if (conflict) throw new ConflictError(conflict);
   }
 
   // Reconcile the calendar event, then persist the (possibly new) event id.
-  const eventId = await calendar.syncEvent(merged);
+  const eventId = await calendar.syncEvent(userId, merged);
   merged.googleEventId = eventId;
 
   db.update(tasks)
@@ -151,16 +164,17 @@ export async function patchTask(id: string, patch: TaskPatch): Promise<Task | nu
       updatedAt: now,
       ...(rescheduled ? { pingedAt: null } : {}),
     })
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId)))
     .run();
 
   return merged;
 }
 
-export async function deleteTask(id: string): Promise<void> {
-  const existing = getRow(id);
-  db.delete(tasks).where(eq(tasks.id, id)).run();
-  if (existing?.googleEventId) {
-    await calendar.deleteEvent(existing.googleEventId);
+export async function deleteTask(userId: string, id: string): Promise<void> {
+  const existing = getRow(userId, id);
+  if (!existing) return;
+  db.delete(tasks).where(and(eq(tasks.id, id), eq(tasks.userId, userId))).run();
+  if (existing.googleEventId) {
+    await calendar.deleteEvent(userId, existing.googleEventId);
   }
 }

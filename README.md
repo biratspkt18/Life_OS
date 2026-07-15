@@ -1,6 +1,7 @@
 # Life OS
 
-A personal, single-user, **scheduling-first** task manager for an ADHD brain.
+A **scheduling-first** task manager for an ADHD brain. Sign in with Google;
+every user gets their own tasks, settings, calendar connection, and reminders.
 
 > You add a task; the app slots it into a time you're actually free. It mirrors
 > your tasks to **Google Calendar** (two-way), reads your existing calendar
@@ -104,7 +105,7 @@ reminder scheduler.
 | Push | `web-push` (VAPID) + a custom service worker |
 | Scheduler | `node-cron` worker (`worker/scheduler.ts`), runs beside Next |
 | Client data | SWR — optimistic create/complete/reschedule, revalidated across `/api/tasks`, `/api/today`, `/api/range` |
-| Auth | single passcode → signed httpOnly cookie (`jose`) |
+| Auth | Google OAuth sign-in → per-user signed httpOnly session cookie (`jose`) |
 | Styling | Tailwind CSS (warm-paper "Cue" palette) + shadcn-style primitives themed to it (`class-variance-authority`, `clsx`, `tailwind-merge`) |
 | Motion | `motion` (Framer Motion) — spring micro-interactions, layout/shared-element animations |
 
@@ -118,9 +119,10 @@ Four small tables (`lib/server/db/schema.ts`):
 | Table | What it holds |
 |---|---|
 | `tasks` | Every task/to-do: `title`, `durationMinutes`, `importance` (high/normal/low), `scheduledStart` (null = an unscheduled to-do), `dueDate` + `preferredDate` (to-do dates), `googleEventId` (link to its calendar event), `completed`/`completedAt`, and `pingedAt` (so a start-time reminder fires once). |
-| `settings` | A single `"app"` row — one JSON blob: the seven per-weekday windows, the legacy/template window, default task length, and the `pushEnabled` / `googleConnected` flags. |
-| `googleAccount` | A single `"app"` row — the Google **refresh token** (silent reconnect), the cached access token + expiry, and the connected `email` / `calendarId`. |
-| `pushSubscriptions` | One row per subscribed browser (`endpoint` + encryption keys); dead ones are pruned automatically when a push bounces. |
+| `users` | One row per person: `googleSub` (Google's stable per-user id), `email`, `name`. Created automatically on first sign-in. |
+| `settings` | One JSON blob per user: the seven per-weekday windows, the legacy/template window, default task length, and the `pushEnabled` / `googleConnected` flags. |
+| `googleAccount` | One row per user — the Google **refresh token** (silent reconnect), the cached access token + expiry, and the connected `email` / `calendarId`. |
+| `pushSubscriptions` | One row per subscribed browser, owned by a user (`endpoint` + encryption keys); dead ones are pruned automatically when a push bounces. |
 
 A **task with a `scheduledStart`** is a calendar block; **without one** it's a
 to-do waiting in the list. That one nullable column is the whole distinction.
@@ -135,9 +137,10 @@ All under `app/api/*`, session-gated except the Google callback:
   tasks merged with live Google events (today reconciles deletions; range is
   read-only for fast browsing).
 - **`/api/settings`** (`GET` · `PATCH`).
-- **`/api/auth/{login,logout}`** — passcode → signed cookie.
-- **`/api/google/{connect,callback,status,disconnect}`** — the OAuth flow and
-  connection state.
+- **`/api/auth/{google,logout}`** — "Continue with Google" entry point → signed
+  per-user session cookie; logout clears it.
+- **`/api/google/{callback,status,disconnect}`** — the OAuth callback (finishes
+  both sign-in and calendar connection) and connection state.
 - **`/api/push/{subscribe,unsubscribe,vapid}`** — register a browser for
   reminders and hand it the VAPID public key.
 
@@ -163,11 +166,13 @@ npm run db:push               # create the SQLite schema in data/lifeos.db
 npm run dev                   # http://localhost:3000  (Next + the reminder worker)
 ```
 
-Open <http://localhost:3000>, log in with the `APP_PASSCODE` you set, and you're
-running. To turn on calendar sync and reminders, see **Using the app** below.
+Open <http://localhost:3000> and hit **Continue with Google** — one tap creates
+your account and connects your calendar. To turn on reminders, see **Using the
+app** below.
 
-> The minimum to boot is just `APP_PASSCODE` and `COOKIE_SECRET`. Google and
-> VAPID are optional — fill them in when you want those features.
+> The minimum to boot is `COOKIE_SECRET` plus the three `GOOGLE_*` OAuth vars —
+> sign-in is Google-only, so the app is unusable without them. VAPID (push) is
+> optional.
 
 ---
 
@@ -178,7 +183,8 @@ so your secrets and database are never committed.
 
 ### Required
 
-- **`APP_PASSCODE`** — what you type on the login screen (single-user gate).
+- **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI`** — the
+  OAuth client behind "Continue with Google" (see the Google setup section).
 - **`COOKIE_SECRET`** — a long random string used to sign the session cookie.
   Generate one:
   ```bash
@@ -259,11 +265,11 @@ VAPID_SUBJECT=mailto:you@example.com
 
 ## Using the app
 
-1. Open <http://localhost:3000> and log in with `APP_PASSCODE`.
-2. **Connect Google Calendar.** A prompt appears on the **Today** screen (also in
-   **Settings → Connect & notify**). Click **Connect** → approve on Google. Once
-   connected, new scheduled tasks become calendar events and your existing Google
-   events appear on Today.
+1. Open <http://localhost:3000> and sign in with **Continue with Google** — the
+   same consent both logs you in and connects your calendar. New scheduled
+   tasks become calendar events and your existing Google events appear on
+   Today. (If you ever disconnect the calendar, reconnect from **Settings →
+   Connect & notify**.)
 3. **Enable reminders.** In **Settings → Connect & notify**, click **Enable** and
    allow notifications.
 4. **Add a task or a to-do.** Tap **Add a task** (or press **n**), then either
@@ -448,9 +454,10 @@ Also SQLite-only (no calendar events). Clear with `npm run clear-tasks`.
   occasionally. Publishing the app (or using a Workspace *Internal* app) removes
   this. It's a Google policy, not a Life OS limit.
 - **iOS push** only works when the app is installed to the Home Screen.
-- **Single-user by design.** One passcode, one Google connection, one local
-  database. Serving multiple people would require real per-user accounts and a
-  hosted database.
+- **Multi-user, one SQLite file.** Every user's tasks, settings, calendar
+  connection, and push subscriptions are scoped by their account. It's still a
+  single SQLite database on one host — fine for a handful of people, not a
+  fleet.
 - This build targets **localhost**. Deploying would need an always-on host (for
   the worker) and HTTPS; the SQLite + in-process-cron design assumes one
   long-running machine.

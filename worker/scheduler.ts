@@ -4,8 +4,8 @@ import path from "node:path";
 import cron from "node-cron";
 import { eq } from "drizzle-orm";
 import { db } from "../lib/server/db";
-import { tasks } from "../lib/server/db/schema";
-import { sendToAll } from "../lib/server/push";
+import { tasks, users } from "../lib/server/db/schema";
+import { sendToUser } from "../lib/server/push";
 import { isSameDay, timeLabel } from "../lib/dates";
 
 /** Parse an integer env var, falling back (with a warning) on garbage. */
@@ -32,19 +32,25 @@ const SUMMARY_MARKER = path.join(
 );
 const localDayKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const readMarker = (): string => {
+
+/** Per-user record of the last day each user's summary fired: { userId: dayKey }. */
+type SummaryMarker = Record<string, string>;
+const readMarker = (): SummaryMarker => {
   try {
-    return fs.readFileSync(SUMMARY_MARKER, "utf8").trim();
+    const parsed = JSON.parse(fs.readFileSync(SUMMARY_MARKER, "utf8"));
+    return parsed && typeof parsed === "object" ? (parsed as SummaryMarker) : {};
   } catch {
-    return "";
+    return {};
   }
 };
+const writeMarker = (m: SummaryMarker) => fs.writeFileSync(SUMMARY_MARKER, JSON.stringify(m));
 
-/** Today's remaining scheduled tasks, soonest first. */
-function remainingToday(now: Date) {
+/** One user's remaining scheduled tasks for today, soonest first. */
+function remainingToday(userId: string, now: Date) {
   return db
     .select()
     .from(tasks)
+    .where(eq(tasks.userId, userId))
     .all()
     .filter(
       (t) => !t.completed && t.scheduledStart && isSameDay(new Date(t.scheduledStart), now),
@@ -54,15 +60,17 @@ function remainingToday(now: Date) {
     );
 }
 
-async function sendSummary(now: Date) {
-  const today = remainingToday(now);
+async function sendSummary(userId: string, now: Date) {
+  const today = remainingToday(userId, now);
   // Mark first: a summary that fails to send should not retry every minute all day.
-  fs.writeFileSync(SUMMARY_MARKER, localDayKey(now));
+  const marker = readMarker();
+  marker[userId] = localDayKey(now);
+  writeMarker(marker);
   if (today.length === 0) return;
   const body = today
     .map((t) => `${timeLabel(new Date(t.scheduledStart!))} · ${t.title}`)
     .join("\n");
-  await sendToAll({
+  await sendToUser(userId, {
     title: `Today: ${today.length} thing${today.length === 1 ? "" : "s"}`,
     body,
     url: "/",
@@ -88,7 +96,7 @@ cron.schedule("* * * * *", async () => {
   try {
     const now = new Date();
 
-    // Per-task pings.
+    // Per-task pings — each ping goes to that task's owner only.
     const horizon = new Date(now.getTime() + LEAD_MINUTES * 60_000);
     for (const t of db.select().from(tasks).all()) {
       if (t.completed || !t.scheduledStart || t.pingedAt) continue;
@@ -96,7 +104,7 @@ cron.schedule("* * * * *", async () => {
       const lateMs = now.getTime() - start.getTime();
       if (start <= horizon && lateMs <= GRACE_MINUTES * 60_000) {
         try {
-          await sendToAll({
+          await sendToUser(t.userId, {
             title: t.title,
             body:
               lateMs > 0
@@ -114,12 +122,17 @@ cron.schedule("* * * * *", async () => {
       }
     }
 
-    // Morning summary (with restart catch-up).
-    if (now.getHours() >= SUMMARY_HOUR && readMarker() !== localDayKey(now)) {
-      try {
-        await sendSummary(now);
-      } catch (err) {
-        console.error("[scheduler] summary failed:", err);
+    // Morning summary (with restart catch-up), once per user per day.
+    if (now.getHours() >= SUMMARY_HOUR) {
+      const marker = readMarker();
+      const day = localDayKey(now);
+      for (const u of db.select().from(users).all()) {
+        if (marker[u.id] === day) continue;
+        try {
+          await sendSummary(u.id, now);
+        } catch (err) {
+          console.error("[scheduler] summary failed:", err);
+        }
       }
     }
   } finally {

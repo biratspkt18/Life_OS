@@ -1,50 +1,34 @@
-"use client";
-import { useState } from "react";
+import { GoogleButton } from "./GoogleButton";
 
-export default function LoginPage() {
-  const [passcode, setPasscode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+/** Human-readable text for the `?error=` reasons the OAuth callback bounces back. */
+const ERROR_TEXT: Record<string, string> = {
+  access_denied: "You cancelled the Google sign-in.",
+  state_mismatch: "The sign-in link expired. Please try again.",
+  no_state_cookie: "The sign-in link expired. Please try again.",
+  exchange_failed: "Couldn't complete sign-in with Google. Please try again.",
+};
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ passcode }),
-    });
-    setBusy(false);
-    if (res.ok) {
-      window.location.href = "/";
-    } else {
-      setError("That passcode didn't work.");
-    }
-  }
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+  const message = error ? (ERROR_TEXT[error] ?? "Sign-in failed. Please try again.") : null;
 
   return (
     <div className="paper-grain relative flex min-h-screen items-center justify-center px-4">
-      <form
-        onSubmit={submit}
-        className="surface relative z-10 w-full max-w-sm animate-scale-in p-6"
-      >
+      <div className="surface relative z-10 w-full max-w-sm animate-scale-in p-6 text-center">
         <h1 className="text-xl font-bold tracking-tight text-ink">Life OS</h1>
-        <p className="mb-4 mt-0.5 text-sm text-muted">Enter your passcode to continue.</p>
-        <input
-          type="password"
-          autoFocus
-          value={passcode}
-          onChange={(e) => setPasscode(e.target.value)}
-          placeholder="Passcode"
-          className="field"
-          aria-label="Passcode"
-        />
-        {error && <p className="mt-2 text-sm text-accent">{error}</p>}
-        <button type="submit" disabled={busy || !passcode} className="btn-primary mt-4 w-full">
-          {busy ? "Checking…" : "Unlock"}
-        </button>
-      </form>
+        <p className="mb-5 mt-0.5 text-sm text-muted">
+          Sign in to plan your day and sync your calendar.
+        </p>
+        <GoogleButton />
+        {message && <p className="mt-3 text-sm text-accent">{message}</p>}
+        <p className="mt-5 text-xs text-muted-soft">
+          One tap creates your account and connects Google Calendar.
+        </p>
+      </div>
     </div>
   );
 }

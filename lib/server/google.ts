@@ -2,11 +2,15 @@ import { google } from "googleapis";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { googleAccount } from "./db/schema";
+import type { GoogleIdentity } from "./users";
 
+// `openid`+`email`+`profile` identify the person (login); `calendar.events` lets
+// us mirror tasks. One consent grants all of it — identity and calendar together.
 const SCOPES = [
-  "https://www.googleapis.com/auth/calendar.events",
   "openid",
   "email",
+  "profile",
+  "https://www.googleapis.com/auth/calendar.events",
 ];
 
 export function oauthClient() {
@@ -27,68 +31,87 @@ export function authUrl(state: string): string {
   });
 }
 
-function getAccount() {
-  return db.select().from(googleAccount).where(eq(googleAccount.id, "app")).get();
+export interface ExchangeResult {
+  identity: GoogleIdentity;
+  refreshToken: string | null;
+  accessToken: string | null;
+  accessTokenExpiry: number | null;
 }
 
-/** Exchange the auth code and persist the refresh token (the reconnect key). */
-export async function exchangeCode(code: string): Promise<void> {
+/**
+ * Exchange the OAuth code for tokens *and* the caller's Google identity. The
+ * identity comes from the verified `id_token` (a Google-signed JWT), which is
+ * the trustworthy source of the stable `sub` — never a value the browser can
+ * forge. Throws if the code is bad or no id_token comes back.
+ */
+export async function exchangeCodeForIdentity(code: string): Promise<ExchangeResult> {
   const client = oauthClient();
   const { tokens } = await client.getToken(code);
-  client.setCredentials(tokens);
 
-  let email: string | null = null;
-  try {
-    const oauth2 = google.oauth2({ version: "v2", auth: client });
-    const me = await oauth2.userinfo.get();
-    email = me.data.email ?? null;
-  } catch {
-    // userinfo is best-effort; the connection still works without it.
-  }
+  if (!tokens.id_token) throw new Error("no id_token in token response");
+  const ticket = await client.verifyIdToken({
+    idToken: tokens.id_token,
+    audience: process.env.GOOGLE_CLIENT_ID,
+  });
+  const p = ticket.getPayload();
+  if (!p?.sub) throw new Error("id_token has no sub");
 
-  const existing = getAccount();
-  // Google only returns a refresh token on first consent; keep the old one if absent.
-  const refreshToken = tokens.refresh_token ?? existing?.refreshToken ?? null;
-  // Same for the email: a transient userinfo failure on reconnect must not
-  // wipe the address we already know.
-  const keepEmail = email ?? existing?.email ?? null;
+  return {
+    identity: { sub: p.sub, email: p.email ?? null, name: p.name ?? null },
+    refreshToken: tokens.refresh_token ?? null,
+    accessToken: tokens.access_token ?? null,
+    accessTokenExpiry: tokens.expiry_date ?? null,
+  };
+}
+
+function getAccount(userId: string) {
+  return db.select().from(googleAccount).where(eq(googleAccount.userId, userId)).get();
+}
+
+/**
+ * Persist the calendar tokens for a user. Google only returns a refresh token on
+ * the *first* consent, so an absent one on re-consent must not wipe the stored
+ * key; same for the email.
+ */
+export function saveGoogleTokensForUser(
+  userId: string,
+  t: { refreshToken: string | null; accessToken: string | null; accessTokenExpiry: number | null; email: string | null },
+): void {
+  const existing = getAccount(userId);
+  const refreshToken = t.refreshToken ?? existing?.refreshToken ?? null;
+  const email = t.email ?? existing?.email ?? null;
+  const calendarId = existing?.calendarId ?? "primary";
 
   db.insert(googleAccount)
     .values({
-      id: "app",
+      userId,
       refreshToken,
-      accessToken: tokens.access_token ?? null,
-      accessTokenExpiry: tokens.expiry_date ?? null,
-      email: keepEmail,
-      calendarId: existing?.calendarId ?? "primary",
+      accessToken: t.accessToken,
+      accessTokenExpiry: t.accessTokenExpiry,
+      email,
+      calendarId,
     })
     .onConflictDoUpdate({
-      target: googleAccount.id,
-      set: {
-        refreshToken,
-        accessToken: tokens.access_token ?? null,
-        accessTokenExpiry: tokens.expiry_date ?? null,
-        email: keepEmail,
-        calendarId: existing?.calendarId ?? "primary",
-      },
+      target: googleAccount.userId,
+      set: { refreshToken, accessToken: t.accessToken, accessTokenExpiry: t.accessTokenExpiry, email, calendarId },
     })
     .run();
 }
 
-export function googleStatus(): {
+export function googleStatus(userId: string): {
   connected: boolean;
   email: string | null;
   configured: boolean;
 } {
-  const a = getAccount();
+  const a = getAccount(userId);
   // `configured` = OAuth credentials exist in the env, so a connect attempt can
-  // actually reach Google's consent screen (vs. failing inside /api/google/connect).
+  // actually reach Google's consent screen (vs. failing inside the start route).
   const configured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
   return { connected: !!a?.refreshToken, email: a?.email ?? null, configured };
 }
 
-export function disconnectGoogle(): void {
-  db.delete(googleAccount).where(eq(googleAccount.id, "app")).run();
+export function disconnectGoogle(userId: string): void {
+  db.delete(googleAccount).where(eq(googleAccount.userId, userId)).run();
 }
 
 /** True for Google's permanent "the refresh token is dead" error. */
@@ -101,24 +124,25 @@ export function isInvalidGrant(err: unknown): boolean {
 }
 
 /**
- * The refresh token is permanently invalid (revoked / expired), so calls will
- * never succeed again. Drop the dead credentials — keeping the email — so the
- * app reports "disconnected" and prompts a reconnect instead of failing silently.
+ * The user's refresh token is permanently invalid (revoked / expired), so calls
+ * will never succeed again. Drop the dead credentials — keeping the email — so
+ * the app reports "disconnected" and prompts a reconnect instead of failing
+ * silently. Only clears calendar access; the login/identity is unaffected.
  */
-export function invalidateGoogleTokens(): void {
+export function invalidateGoogleTokens(userId: string): void {
   db.update(googleAccount)
     .set({ refreshToken: null, accessToken: null, accessTokenExpiry: null })
-    .where(eq(googleAccount.id, "app"))
+    .where(eq(googleAccount.userId, userId))
     .run();
 }
 
 /**
- * An authenticated Calendar client, or null if not connected. The googleapis
- * client refreshes the short-lived access token from the stored refresh token
- * automatically (silent reconnect); we persist any rotated tokens.
+ * An authenticated Calendar client for a user, or null if not connected. The
+ * googleapis client refreshes the short-lived access token from the stored
+ * refresh token automatically (silent reconnect); we persist any rotated tokens.
  */
-export async function getCalendarClient() {
-  const a = getAccount();
+export async function getCalendarClient(userId: string) {
+  const a = getAccount(userId);
   if (!a?.refreshToken) return null;
 
   const client = oauthClient();
@@ -135,7 +159,7 @@ export async function getCalendarClient() {
         accessTokenExpiry: t.expiry_date ?? a.accessTokenExpiry,
         ...(t.refresh_token ? { refreshToken: t.refresh_token } : {}),
       })
-      .where(eq(googleAccount.id, "app"))
+      .where(eq(googleAccount.userId, userId))
       .run();
   });
 

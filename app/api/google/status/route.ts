@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { googleStatus } from "@/lib/server/google";
+import { requireUserId } from "@/lib/server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(googleStatus());
+  const userId = await requireUserId();
+  return NextResponse.json(googleStatus(userId));
 }

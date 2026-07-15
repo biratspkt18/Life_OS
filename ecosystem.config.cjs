@@ -17,7 +17,7 @@ module.exports = {
     {
       name: "life-os-web",
       // `next start` serves the production build. NODE_ENV=production makes the
-      // session cookie Secure and the passcode/secret gates fail closed.
+      // session cookie Secure and the COOKIE_SECRET check fail closed.
       script: "npm",
       args: "run start:web",
       cwd: __dirname,

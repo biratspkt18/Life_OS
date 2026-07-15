@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { listEvents } from "./calendar";
@@ -25,6 +26,7 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
  * enforce what we can than to fail open entirely.
  */
 export async function findConflict(
+  userId: string,
   startISO: string,
   durationMinutes: number,
   excludeTaskId?: string,
@@ -32,9 +34,9 @@ export async function findConflict(
   const start = new Date(startISO).getTime();
   const end = start + durationMinutes * 60_000;
 
-  // 1) Local Life OS tasks. A *completed* task still holds its slot — you
-  //    already spent that time, so nothing new may overlap it.
-  for (const t of db.select().from(tasks).all()) {
+  // 1) Local Life OS tasks — this user's only. A *completed* task still holds
+  //    its slot — you already spent that time, so nothing new may overlap it.
+  for (const t of db.select().from(tasks).where(eq(tasks.userId, userId)).all()) {
     if (t.id === excludeTaskId || !t.scheduledStart) continue;
     const s = new Date(t.scheduledStart).getTime();
     const e = s + t.durationMinutes * 60_000;
@@ -53,7 +55,7 @@ export async function findConflict(
   //    double-report). A Google fetch failure is non-fatal.
   let events;
   try {
-    events = await listEvents(new Date(startISO).toISOString(), new Date(end).toISOString());
+    events = await listEvents(userId, new Date(startISO).toISOString(), new Date(end).toISOString());
   } catch {
     return null;
   }

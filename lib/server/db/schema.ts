@@ -1,9 +1,37 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { Settings } from "../../types";
 
-/** One scheduled (or captured) task. Mirrors the client `Task` shape. */
+/**
+ * A person who can log in. Identity is delegated to Google: `googleSub` is
+ * Google's stable, opaque per-user id (the `sub` claim on the ID token) — it
+ * never changes even if the user renames their account or changes email.
+ *
+ * `googleSub` is nullable only to allow a *pre-seeded* row (created by the
+ * multi-user migration for the original single-user data) to be adopted on the
+ * owner's first Google login, which fills it in. Every real login has it set.
+ */
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    googleSub: text("google_sub"),
+    email: text("email").notNull(),
+    name: text("name"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => ({
+    // One account per Google identity, and per email (so adoption-by-email is safe).
+    googleSubIdx: uniqueIndex("users_google_sub_idx").on(t.googleSub),
+    emailIdx: uniqueIndex("users_email_idx").on(t.email),
+  }),
+);
+
+/** One scheduled (or captured) task, owned by a single user. */
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
   title: text("title").notNull(),
   durationMinutes: integer("duration_minutes").notNull(),
   importance: text("importance").notNull(),
@@ -21,15 +49,19 @@ export const tasks = sqliteTable("tasks", {
   pingedAt: text("pinged_at"),
 });
 
-/** Single-row app settings, stored as one JSON blob (matches the `Settings` type). */
+/** Per-user app settings, stored as one JSON blob (matches the `Settings` type). */
 export const settings = sqliteTable("settings", {
-  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id),
   data: text("data", { mode: "json" }).notNull().$type<Settings>(),
 });
 
-/** Single-row Google connection. The refresh token = silent reconnect. */
+/** Per-user Google connection. The refresh token = silent reconnect. */
 export const googleAccount = sqliteTable("google_account", {
-  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id),
   refreshToken: text("refresh_token"),
   accessToken: text("access_token"),
   accessTokenExpiry: integer("access_token_expiry"), // epoch ms
@@ -37,9 +69,12 @@ export const googleAccount = sqliteTable("google_account", {
   calendarId: text("calendar_id"),
 });
 
-/** A browser's web-push subscription. */
+/** A browser's web-push subscription, owned by the user who registered it. */
 export const pushSubscriptions = sqliteTable("push_subscriptions", {
   endpoint: text("endpoint").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),
   createdAt: text("created_at").notNull(),

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCode } from "@/lib/server/google";
+import { exchangeCodeForIdentity, saveGoogleTokensForUser } from "@/lib/server/google";
+import { findOrCreateUserFromGoogle } from "@/lib/server/users";
+import { createSessionToken, SESSION_COOKIE } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,15 +16,15 @@ export async function GET(req: NextRequest) {
   // Behind a reverse proxy the request's own protocol can be http (Caddy→app is
   // plain HTTP on localhost), so prefer an explicit APP_ORIGIN in production and
   // fall back to the request origin for local dev.
-  const home = new URL("/", process.env.APP_ORIGIN ?? url.origin);
+  const appOrigin = process.env.APP_ORIGIN ?? url.origin;
 
-  // Surface *why* it failed so it isn't a silent dead end. The reason rides back
-  // on the redirect (`?google=error&reason=…`) and is logged server-side.
+  // On failure, bounce back to /login (not home) — an unauthenticated user who
+  // declined consent would otherwise be redirected right back here by middleware.
   const fail = (reason: string) => {
     console.error(`[google] callback failed: ${reason}`);
-    home.searchParams.set("google", "error");
-    home.searchParams.set("reason", reason);
-    const r = NextResponse.redirect(home);
+    const to = new URL("/login", appOrigin);
+    to.searchParams.set("error", reason);
+    const r = NextResponse.redirect(to);
     r.cookies.set("g_state", "", { path: "/", maxAge: 0 });
     return r;
   };
@@ -32,15 +34,36 @@ export async function GET(req: NextRequest) {
   if (!state || !expected) return fail("no_state_cookie");
   if (state !== expected) return fail("state_mismatch");
 
+  let result;
   try {
-    await exchangeCode(code);
+    result = await exchangeCodeForIdentity(code);
   } catch (err) {
     console.error("[google] token exchange failed:", err);
     return fail("exchange_failed");
   }
 
+  // Identity → the app user (created on first login), then persist calendar
+  // access for that user. Both jobs, one consent.
+  const user = findOrCreateUserFromGoogle(result.identity);
+  saveGoogleTokensForUser(user.id, {
+    refreshToken: result.refreshToken,
+    accessToken: result.accessToken,
+    accessTokenExpiry: result.accessTokenExpiry,
+    email: result.identity.email,
+  });
+
+  // Log them in: sign a session cookie carrying their user id.
+  const token = await createSessionToken(user.id);
+  const home = new URL("/", appOrigin);
   home.searchParams.set("google", "connected");
   const res = NextResponse.redirect(home);
+  res.cookies.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+    secure: process.env.NODE_ENV === "production",
+  });
   res.cookies.set("g_state", "", { path: "/", maxAge: 0 });
   return res;
 }

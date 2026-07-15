@@ -5,7 +5,7 @@ Production deployment checklist for a single Ubuntu droplet (2 GB RAM) where
 to the app on `localhost:3000`.
 
 Architecture is unchanged from dev: Next.js + SQLite (`better-sqlite3`) + an
-in-process `node-cron` worker, single-user passcode auth. No Docker, no
+in-process `node-cron` worker, Google-OAuth multi-user auth. No Docker, no
 Postgres, no serverless.
 
 The app is run by **two PM2 processes** — the Next server and the cron worker —
@@ -78,7 +78,6 @@ change from local, some carry over:
 
 ```bash
 # --- MUST be set / changed for production ---
-APP_PASSCODE=your-real-passcode
 COOKIE_SECRET=paste-a-fresh-long-random-string        # see below
 APP_ORIGIN=https://life-os.biratspkt.com
 GOOGLE_REDIRECT_URI=https://life-os.biratspkt.com/api/google/callback
@@ -203,10 +202,10 @@ pm2 logs life-os-worker   # look for "[scheduler] running ..."
 
 ## 6. Verify
 
-1. Visit `https://life-os.biratspkt.com` → passcode screen loads over HTTPS.
-2. Log in with `APP_PASSCODE`.
-3. Settings → **Connect Google** → consent → you land back on the app with
-   Google connected (this exercises `APP_ORIGIN` + the prod redirect URI).
+1. Visit `https://life-os.biratspkt.com` → the sign-in screen loads over HTTPS.
+2. **Continue with Google** → consent → you land back on the app signed in,
+   with Calendar connected (this exercises `APP_ORIGIN` + the prod redirect
+   URI in one pass).
 4. Enable notifications and schedule a task a few minutes out to confirm the
    worker pings you.
 
@@ -224,6 +223,27 @@ npm run build
 pm2 restart ecosystem.config.cjs   # or: pm2 restart all
 ```
 
+### One-time: the multi-user migration
+
+The first deploy that includes multi-user auth must convert the existing
+single-user database **before** `db:push` — the migration script adds the
+`users` table and stamps every existing row with an owner. `db:push` first
+would instead try to add a NOT NULL `user_id` column to populated tables and
+fail (or offer to truncate them). So, once only:
+
+```bash
+git pull && npm ci
+npm run migrate:multiuser   # backs up the DB, rewrites in one transaction,
+                            # refuses to run twice (idempotent)
+npm run db:push
+npm run build
+pm2 restart ecosystem.config.cjs
+```
+
+Your first Google sign-in afterwards (with the email already stored in the old
+Google connection) *adopts* the migrated account, so all existing tasks stay
+yours.
+
 Your SQLite data in `data/lifeos.db` is untouched by `git pull` and by the
 rebuild — only the code changes.
 
@@ -237,5 +257,6 @@ rebuild — only the code changes.
 | `redirect_uri_mismatch` from Google | The `.env` `GOOGLE_REDIRECT_URI` must match a URI listed in the Google Console client, exactly. |
 | Cookie/login won't stick | Ensure you're on https (Caddy) and `NODE_ENV=production` — PM2 sets it via `ecosystem.config.cjs`. |
 | No pings / no morning summary | `pm2 logs life-os-worker`; check the server timezone (step 1a). |
-| App boots but crashes on start | `COOKIE_SECRET` and `APP_PASSCODE` must be set — the app fails closed in production without them. |
+| App boots but crashes on start | `COOKIE_SECRET` must be set — the app fails closed in production without it. |
+| "Google OAuth is not configured" on sign-in | Set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` — login is Google-only. |
 | `Cannot find module '…webpack-runtime.js'` | `rm -rf .next && npm run build && pm2 restart all`. Data is untouched. |
