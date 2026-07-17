@@ -1,10 +1,11 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Block, DayShape } from "../../lib/dayShape";
 import { compactDuration } from "../../lib/dayShape";
 import { IMPORTANCE_LABEL } from "../../lib/types";
 import { addMinutes, durationLabel, format, minutesBetween, startOfDay, timeLabel } from "../../lib/dates";
-import { dropTask, setCompleted } from "../../lib/tasks";
+import { dropTask, rescheduleTaskOptimistic, setCompleted } from "../../lib/tasks";
 import { openReschedule } from "../RescheduleModal";
 import { openEdit } from "../Capture";
 import { ActionMenu } from "../ActionMenu";
@@ -12,6 +13,39 @@ import { ImportanceMark } from "../pickers";
 import { CheckIcon, ClockIcon, EditIcon, TrashIcon } from "../icons";
 
 const TRACK_PX = 44; // thick, easy to read
+
+// Drag-to-schedule tuning.
+const STEP_MIN = 5; // quantize a dragged start to 5-minute marks
+const SNAP_MIN = 9; // magnet range: snap flush to a neighbour / window edge within this
+const LIFT_PX = 26; // how far an overlapped block rises above the bar to make room
+const DRAG_LIFT_PX = 14; // how far the dragged block floats while it can't drop (conflict)
+const DRAG_THRESHOLD_PX = 4; // pointer travel before a press becomes a drag (vs a hover/tap)
+/** Springy settle shared by the lift, the magnet snap, and the drop. */
+const SETTLE = { type: "spring", stiffness: 520, damping: 34 } as const;
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+/**
+ * Live drag state for a timeline block being repositioned by pointer. All times
+ * are minutes from the window start, so overlap / snap math stays integer-simple.
+ */
+interface DragState {
+  id: string;
+  pointerId: number;
+  durationMin: number;
+  /** Where the block started (to detect a no-op drop and to spring back to). */
+  originMin: number;
+  /** pointer-minute minus start-minute at grab, so the block doesn't jump under the finger. */
+  grabOffsetMin: number;
+  /** Current proposed start (quantized / snapped). */
+  startMin: number;
+  /** The proposed slot overlaps another block — can't drop here. */
+  conflict: boolean;
+  /** Ids of the blocks the proposal currently overlaps (they lift out of the way). */
+  liftedIds: string[];
+  /** The magnet engaged this frame (snapped flush to a neighbour / edge). */
+  snapped: boolean;
+}
 
 /**
  * The day timeline: a proportional bar across the working window. Each activity
@@ -96,6 +130,161 @@ export function Timeline({
     dropTask(b.item.id);
   }
 
+  // ── Drag-to-schedule ──────────────────────────────────────────────────────
+  const reduceMotion = useReducedMotion();
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // A press that hasn't yet moved past the threshold — kept in a ref so it
+  // doesn't re-render, and so a tiny wobble stays a hover/tap, not a drag.
+  const pending = useRef<{
+    id: string;
+    pointerId: number;
+    x: number;
+    y: number;
+    durationMin: number;
+    originMin: number;
+    grabOffsetMin: number;
+  } | null>(null);
+
+  // Only your own, still-open tasks can be dragged — Google events are read-only
+  // and a done block shouldn't silently un-complete itself when nudged.
+  const canDrag = (b: Block) => b.item.source === "lifeos" && !b.item.completed;
+
+  // Every block as integer minute spans, for overlap / snap checks.
+  const blockMins = useMemo(
+    () =>
+      shape.blocks.map((b) => ({
+        id: b.item.id,
+        startMin: minutesBetween(windowStart, b.start),
+        endMin: minutesBetween(windowStart, b.end),
+      })),
+    [shape.blocks, windowStart],
+  );
+
+  /** Pointer x → minutes from window start (clamped to the track). */
+  const pointerMinutes = useCallback(
+    (clientX: number) => {
+      const el = trackRef.current;
+      if (!el) return 0;
+      const r = el.getBoundingClientRect();
+      return clamp((clientX - r.left) / r.width, 0, 1) * windowMinutes;
+    },
+    [windowMinutes],
+  );
+
+  /**
+   * Resolve a raw dragged start into a placed one: quantize to 5-min marks, then
+   * magnet-snap flush to a neighbour's edge or the window edge if it lands within
+   * range and that spot is free. Reports which existing blocks it overlaps.
+   */
+  const resolve = useCallback(
+    (id: string, durationMin: number, rawStart: number) => {
+      const maxStart = Math.max(0, windowMinutes - durationMin);
+      const others = blockMins.filter((o) => o.id !== id);
+      const free = (s: number) => !others.some((o) => s < o.endMin && o.startMin < s + durationMin);
+
+      let start = clamp(Math.round(rawStart / STEP_MIN) * STEP_MIN, 0, maxStart);
+
+      // Magnet: prefer a nearby flush position (right after / right before a block,
+      // or hard against a window edge) when it's within range and actually free.
+      const candidates = [0, maxStart];
+      for (const o of others) candidates.push(o.endMin, o.startMin - durationMin);
+      let best: number | null = null;
+      let bestDist = SNAP_MIN + 0.5;
+      for (const c of candidates) {
+        const cc = clamp(c, 0, maxStart);
+        const dist = Math.abs(cc - start);
+        if (dist <= bestDist && free(cc)) {
+          best = cc;
+          bestDist = dist;
+        }
+      }
+      let snapped = false;
+      if (best != null) {
+        start = best;
+        snapped = true;
+      }
+
+      const liftedIds = others
+        .filter((o) => start < o.endMin && o.startMin < start + durationMin)
+        .map((o) => o.id);
+      return { startMin: start, conflict: liftedIds.length > 0, liftedIds, snapped: snapped && liftedIds.length === 0 };
+    },
+    [blockMins, windowMinutes],
+  );
+
+  function onBlockPointerDown(e: React.PointerEvent, b: Block) {
+    if (drag || !canDrag(b)) return;
+    const originMin = minutesBetween(windowStart, b.start);
+    const durationMin = Math.max(STEP_MIN, minutesBetween(b.start, b.end));
+    pending.current = {
+      id: b.item.id,
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      durationMin,
+      originMin,
+      grabOffsetMin: pointerMinutes(e.clientX) - originMin,
+    };
+  }
+
+  function onTrackPointerMove(e: React.PointerEvent) {
+    const p = pending.current;
+    if (!drag && p && e.pointerId === p.pointerId) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD_PX) return;
+      const el = trackRef.current;
+      if (el) {
+        try {
+          el.setPointerCapture(p.pointerId);
+        } catch {
+          /* capture is best-effort */
+        }
+      }
+      setActiveId(null); // drop the hover popover the instant a drag starts
+      const r = resolve(p.id, p.durationMin, pointerMinutes(e.clientX) - p.grabOffsetMin);
+      setDrag({
+        id: p.id,
+        pointerId: p.pointerId,
+        durationMin: p.durationMin,
+        originMin: p.originMin,
+        grabOffsetMin: p.grabOffsetMin,
+        ...r,
+      });
+      return;
+    }
+    if (drag && e.pointerId === drag.pointerId) {
+      e.preventDefault();
+      const r = resolve(drag.id, drag.durationMin, pointerMinutes(e.clientX) - drag.grabOffsetMin);
+      setDrag((d) => (d ? { ...d, ...r } : d));
+    }
+  }
+
+  function onTrackPointerUp(e: React.PointerEvent) {
+    const d = drag;
+    pending.current = null;
+    if (!d || e.pointerId !== d.pointerId) return;
+    const el = trackRef.current;
+    if (el) {
+      try {
+        el.releasePointerCapture(d.pointerId);
+      } catch {
+        /* already released */
+      }
+    }
+    // Commit only a real, conflict-free move. Keep the block pinned at the drop
+    // spot (drag stays set) until the optimistic cache update lands, so it never
+    // flickers back to the old slot; then clear.
+    if (!d.conflict && d.startMin !== d.originMin) {
+      rescheduleTaskOptimistic(d.id, addMinutes(windowStart, d.startMin))
+        .catch(() => {
+          /* rollback handled inside; block springs home when drag clears */
+        })
+        .finally(() => setDrag(null));
+    } else {
+      setDrag(null); // no-op or blocked → spring back to origin
+    }
+  }
+
   if (!shape.enabled || windowMinutes <= 0) {
     return <p className="mb-6 text-sm text-muted">Day off — nothing scheduled.</p>;
   }
@@ -115,45 +304,105 @@ export function Timeline({
 
   return (
     <div className="relative mb-6">
-      {/* Track */}
+      {/* Track. The wrapper doesn't clip, so a block can lift *above* the bar
+          while being dragged over; the backdrop layer below keeps the rounded
+          fill + gridlines crisp. */}
       <div
-        className="relative w-full overflow-hidden rounded-lg bg-paper-edge/70"
-        style={{ height: TRACK_PX }}
+        ref={trackRef}
+        className="relative w-full"
+        style={{ height: TRACK_PX, touchAction: drag ? "none" : undefined }}
+        onPointerMove={onTrackPointerMove}
+        onPointerUp={onTrackPointerUp}
+        onPointerCancel={onTrackPointerUp}
       >
-        {/* Hour gridlines */}
-        {hourMarks.map((mk) => (
-          <div
-            key={mk.date.toISOString()}
-            className={mk.major ? "absolute top-0 bottom-0 w-px bg-muted/25" : "absolute top-0 bottom-0 w-px bg-muted/10"}
-            style={{ left: `${mk.pct}%` }}
-          />
-        ))}
+        {/* Rounded fill + hour gridlines + now marker (clipped to the bar). */}
+        <div className="absolute inset-0 overflow-hidden rounded-lg bg-paper-edge/70">
+          {hourMarks.map((mk) => (
+            <div
+              key={mk.date.toISOString()}
+              className={mk.major ? "absolute top-0 bottom-0 w-px bg-muted/25" : "absolute top-0 bottom-0 w-px bg-muted/10"}
+              style={{ left: `${mk.pct}%` }}
+            />
+          ))}
+          {nowPct != null && (
+            <div className="absolute top-0 bottom-0 z-10 w-0.5 bg-ink" style={{ left: `${nowPct}%` }}>
+              <span className="absolute -left-[3px] -top-[3px] h-2 w-2 rounded-full bg-ink" />
+            </div>
+          )}
+        </div>
 
-        {/* Activity segments */}
-        {shape.blocks.map((b) => (
-          <button
-            key={b.item.id}
-            type="button"
-            aria-label={segmentAria(b, isUndone(b))}
-            onMouseEnter={() => show(b.item.id)}
-            onMouseLeave={scheduleClose}
-            onFocus={() => show(b.item.id)}
-            onBlur={scheduleClose}
-            className={[
-              "absolute top-1 bottom-1 rounded-[3px] outline-none transition-[filter] focus-visible:ring-2 focus-visible:ring-ink/40 hover:brightness-95",
-              activeId === b.item.id ? "brightness-95 ring-2 ring-ink/30" : "",
-              blockClasses(b, isUndone(b)),
-            ].join(" ")}
-            style={{ left: `${b.topPct}%`, width: `calc(${b.heightPct}% - 2px)`, minWidth: 4 }}
-          />
-        ))}
+        {/* Activity segments — draggable when they're your own open tasks. */}
+        {shape.blocks.map((b) => {
+          const dragging = drag?.id === b.item.id;
+          const lifted = !dragging && (drag?.liftedIds.includes(b.item.id) ?? false);
+          const leftPct = dragging ? (drag.startMin / windowMinutes) * 100 : b.topPct;
+          const y = dragging ? (drag.conflict ? -DRAG_LIFT_PX : 0) : lifted ? -LIFT_PX : 0;
+          const draggable = canDrag(b);
+          return (
+            <motion.button
+              key={b.item.id}
+              type="button"
+              aria-label={segmentAria(b, isUndone(b))}
+              onPointerDown={(e) => onBlockPointerDown(e, b)}
+              onMouseEnter={() => !drag && show(b.item.id)}
+              onMouseLeave={scheduleClose}
+              onFocus={() => !drag && show(b.item.id)}
+              onBlur={scheduleClose}
+              className={[
+                "absolute top-1 bottom-1 rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ink/40",
+                dragging
+                  ? drag.conflict
+                    ? "z-30 shadow-lift ring-2 ring-danger/70 cursor-grabbing"
+                    : "z-30 shadow-lift ring-2 ring-accent/80 cursor-grabbing"
+                  : lifted
+                    ? "z-20 shadow-lift ring-1 ring-ink/10"
+                    : "transition-[filter] hover:brightness-95",
+                !dragging && activeId === b.item.id ? "brightness-95 ring-2 ring-ink/30" : "",
+                draggable && !dragging ? "cursor-grab touch-none select-none" : "",
+                blockClasses(b, isUndone(b)),
+              ].join(" ")}
+              style={{ width: `calc(${b.heightPct}% - 2px)`, minWidth: 4 }}
+              animate={{ left: `${leftPct}%`, y }}
+              transition={{
+                left: dragging && !drag.snapped ? { duration: 0 } : reduceMotion ? { duration: 0 } : SETTLE,
+                y: reduceMotion ? { duration: 0 } : SETTLE,
+                default: reduceMotion ? { duration: 0 } : SETTLE,
+              }}
+            />
+          );
+        })}
 
-        {/* Now marker */}
-        {nowPct != null && (
-          <div className="absolute top-0 bottom-0 z-10 w-0.5 bg-ink" style={{ left: `${nowPct}%` }}>
-            <span className="absolute -left-[3px] -top-[3px] h-2 w-2 rounded-full bg-ink" />
-          </div>
-        )}
+        {/* Live time readout that tracks the drag — the exact time it'll land on. */}
+        <AnimatePresence>
+          {drag && (
+            <motion.div
+              key="drag-time"
+              aria-hidden
+              className="pointer-events-none absolute z-40 -translate-x-1/2 whitespace-nowrap rounded-lg border border-paper-edge bg-paper-card px-2.5 py-1 text-center shadow-lift"
+              style={{ left: `${clamp(((drag.startMin + drag.durationMin / 2) / windowMinutes) * 100, 13, 87)}%`, top: -DRAG_LIFT_PX }}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.92 }}
+              animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.92 }}
+              transition={{ transform: reduceMotion ? { duration: 0 } : SETTLE, left: { duration: 0 } }}
+            >
+              <span className="text-sm font-semibold tabular-nums text-ink">
+                {timeLabel(addMinutes(windowStart, drag.startMin))}
+              </span>
+              <span className="mx-1 text-muted-soft">→</span>
+              <span className="text-sm tabular-nums text-muted">
+                {timeLabel(addMinutes(windowStart, drag.startMin + drag.durationMin))}
+              </span>
+              <span
+                className={[
+                  "mt-0.5 block text-[0.65rem] font-semibold uppercase tracking-wide",
+                  drag.conflict ? "text-danger" : "text-accent",
+                ].join(" ")}
+              >
+                {drag.conflict ? "Overlaps — won’t drop" : "Release to schedule"}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Hover/focus detail popover — interactive for unfinished Life OS tasks */}

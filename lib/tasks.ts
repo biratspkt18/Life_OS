@@ -141,6 +141,52 @@ export async function rescheduleTask(id: string, newStart: Date): Promise<void> 
   mutate(isItemCacheKey);
 }
 
+/** Immutably move one id to `startIso` across both cache shapes (Task vs TodayItem). */
+function withStart(
+  list: Task[] | TodayItem[] | undefined,
+  id: string,
+  startIso: string,
+): Task[] | TodayItem[] | undefined {
+  if (!Array.isArray(list)) return list;
+  let changed = false;
+  const next = (list as (Task | TodayItem)[]).map((item) => {
+    if (item.id !== id) return item;
+    changed = true;
+    // The raw list (`/api/tasks`) holds Tasks with `scheduledStart`; the day and
+    // month caches hold TodayItems with `start`. Patch whichever this row is.
+    if ("scheduledStart" in item) {
+      return { ...item, scheduledStart: startIso, completed: false, completedAt: null };
+    }
+    return { ...item, start: startIso, completed: false };
+  });
+  return (changed ? next : list) as Task[] | TodayItem[];
+}
+
+/**
+ * Reschedule with an **optimistic** move — the block jumps to its new time in
+ * every view immediately, before the network round-trip, so a drag-drop on the
+ * timeline settles exactly where it was dropped instead of snapping back to the
+ * old slot until the refetch lands. Rolls back on error (e.g. a server 409).
+ */
+export async function rescheduleTaskOptimistic(id: string, newStart: Date): Promise<void> {
+  const iso = newStart.toISOString();
+  await mutate(
+    isItemCacheKey,
+    (list?: Task[] | TodayItem[]) => withStart(list, id, iso),
+    { revalidate: false },
+  );
+  try {
+    await req(`${TASKS_KEY}/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduledStart: iso, completed: false, completedAt: null }),
+    });
+  } catch (err) {
+    mutate(isItemCacheKey); // revert the optimistic move
+    throw err;
+  }
+  mutate(isItemCacheKey);
+}
+
 export async function updateTask(id: string, patch: Partial<Task>): Promise<void> {
   await req(`${TASKS_KEY}/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   mutate(isItemCacheKey);
