@@ -4,7 +4,8 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Block, DayShape } from "../../lib/dayShape";
 import { compactDuration } from "../../lib/dayShape";
 import { IMPORTANCE_LABEL } from "../../lib/types";
-import { addMinutes, durationLabel, format, minutesBetween, startOfDay, timeLabel } from "../../lib/dates";
+import { addMinutes, durationLabel, format, minutesBetween, timeLabel } from "../../lib/dates";
+import { STEP_MIN, hourMarks as buildHourMarks, resolvePlacement } from "../../lib/placement";
 import { dropTask, rescheduleTaskOptimistic, setCompleted } from "../../lib/tasks";
 import { openReschedule } from "../RescheduleModal";
 import { openEdit } from "../Capture";
@@ -14,9 +15,7 @@ import { CheckIcon, ClockIcon, EditIcon, TrashIcon } from "../icons";
 
 const TRACK_PX = 44; // thick, easy to read
 
-// Drag-to-schedule tuning.
-const STEP_MIN = 5; // quantize a dragged start to 5-minute marks
-const SNAP_MIN = 9; // magnet range: snap flush to a neighbour / window edge within this
+// Drag-to-schedule tuning (quantize/magnet maths live in lib/placement).
 const LIFT_PX = 26; // how far an overlapped block rises above the bar to make room
 const DRAG_LIFT_PX = 14; // how far the dragged block floats while it can't drop (conflict)
 const DRAG_THRESHOLD_PX = 4; // pointer travel before a press becomes a drag (vs a hover/tap)
@@ -65,22 +64,10 @@ export function Timeline({
   const { windowStart, windowEnd, windowMinutes } = shape;
 
   // Every hour mark inside the window; `major` ones get a number below the bar.
-  const hourMarks = useMemo(() => {
-    if (windowMinutes <= 0) return [];
-    const windowHours = windowMinutes / 60;
-    const labelEvery = Math.max(1, Math.ceil(windowHours / 5)); // ~5 labels max
-    const marks: { date: Date; pct: number; major: boolean }[] = [];
-    let m = startOfDay(windowStart);
-    while (m < windowStart) m = addMinutes(m, 60);
-    let i = 0;
-    while (m <= windowEnd) {
-      const pct = (minutesBetween(windowStart, m) / windowMinutes) * 100;
-      marks.push({ date: m, pct, major: i % labelEvery === 0 });
-      m = addMinutes(m, 60);
-      i += 1;
-    }
-    return marks;
-  }, [windowStart, windowEnd, windowMinutes]);
+  const hourMarks = useMemo(
+    () => buildHourMarks(windowStart, windowEnd, windowMinutes),
+    [windowStart, windowEnd, windowMinutes],
+  );
 
   // Which segment is hovered/focused, for the detail popover. Keyed by item id
   // (stable across the 30s clock-tick re-renders that rebuild `shape.blocks`).
@@ -173,42 +160,18 @@ export function Timeline({
   );
 
   /**
-   * Resolve a raw dragged start into a placed one: quantize to 5-min marks, then
-   * magnet-snap flush to a neighbour's edge or the window edge if it lands within
-   * range and that spot is free. Reports which existing blocks it overlaps.
+   * Resolve a raw dragged start into a placed one — quantize, magnet-snap,
+   * detect overlaps (shared maths in lib/placement).
    */
   const resolve = useCallback(
     (id: string, durationMin: number, rawStart: number) => {
-      const maxStart = Math.max(0, windowMinutes - durationMin);
-      const others = blockMins.filter((o) => o.id !== id);
-      const free = (s: number) => !others.some((o) => s < o.endMin && o.startMin < s + durationMin);
-
-      let start = clamp(Math.round(rawStart / STEP_MIN) * STEP_MIN, 0, maxStart);
-
-      // Magnet: prefer a nearby flush position (right after / right before a block,
-      // or hard against a window edge) when it's within range and actually free.
-      const candidates = [0, maxStart];
-      for (const o of others) candidates.push(o.endMin, o.startMin - durationMin);
-      let best: number | null = null;
-      let bestDist = SNAP_MIN + 0.5;
-      for (const c of candidates) {
-        const cc = clamp(c, 0, maxStart);
-        const dist = Math.abs(cc - start);
-        if (dist <= bestDist && free(cc)) {
-          best = cc;
-          bestDist = dist;
-        }
-      }
-      let snapped = false;
-      if (best != null) {
-        start = best;
-        snapped = true;
-      }
-
-      const liftedIds = others
-        .filter((o) => start < o.endMin && o.startMin < start + durationMin)
-        .map((o) => o.id);
-      return { startMin: start, conflict: liftedIds.length > 0, liftedIds, snapped: snapped && liftedIds.length === 0 };
+      const r = resolvePlacement({
+        others: blockMins.filter((o) => o.id !== id),
+        windowMinutes,
+        durationMin,
+        rawStartMin: rawStart,
+      });
+      return { startMin: r.startMin, conflict: r.conflict, liftedIds: r.overlapIds, snapped: r.snapped };
     },
     [blockMins, windowMinutes],
   );

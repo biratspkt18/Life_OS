@@ -3,14 +3,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useAllTasks, useDayItems, useSettings } from "../hooks/useDb";
 import { ConflictError, createTask, dropTask, updateTask } from "../lib/tasks";
 import type { Importance } from "../lib/types";
-import { addDays, atTime, dayLabel, durationLabel, format, startOfDay } from "../lib/dates";
+import { addDays, atTime, dayLabel, durationLabel, format, startOfDay, timeLabel } from "../lib/dates";
 import { DayPickerButton, DurationPicker, ImportancePicker } from "./pickers";
-import { FreeSlotChips } from "./FreeSlotChips";
+import { DayPlacer, useFirstFit } from "./DayPlacer";
 import { CloseIcon, PlusIcon, TrashIcon } from "./icons";
 import { Button } from "./ui/button";
 
-/** Default slot for a fresh capture: tomorrow at 2:00 PM (editable). */
-const DEFAULT_TIME = "14:00";
+/** Default day for a fresh capture: tomorrow (the time comes from the placer's first fit). */
 function defaultDay(now: Date): Date {
   return addDays(startOfDay(now), 1);
 }
@@ -47,7 +46,9 @@ export function Capture({ now }: { now: Date }) {
   const [duration, setDuration] = useState(settings.defaultDurationMinutes);
   const [importance, setImportance] = useState<Importance>("normal");
   const [day, setDay] = useState<Date>(() => defaultDay(now));
-  const [time, setTime] = useState<string>(DEFAULT_TIME);
+  // "HH:mm" once the user has placed the block (drag / chip / exact time);
+  // null = let the placer seat it at the day's first free fit.
+  const [pickedTime, setPickedTime] = useState<string | null>(null);
   // When true, capture goes to the To-do list with no scheduled time yet.
   const [noTime, setNoTime] = useState(false);
   // To-do dates (only used when noTime). null = not set.
@@ -69,7 +70,7 @@ export function Capture({ now }: { now: Date }) {
       setImportance(editTask.importance);
       setNoTime(!scheduled);
       setDay(scheduled ? startOfDay(scheduled) : defaultDay(now));
-      setTime(scheduled ? format(scheduled, "HH:mm") : DEFAULT_TIME);
+      setPickedTime(scheduled ? format(scheduled, "HH:mm") : null);
       setDueDate(editTask.dueDate ? startOfDay(new Date(editTask.dueDate)) : null);
       setPreferredDate(editTask.preferredDate ? startOfDay(new Date(editTask.preferredDate)) : null);
       setOpen(true);
@@ -84,7 +85,7 @@ export function Capture({ now }: { now: Date }) {
     setDuration(settings.defaultDurationMinutes);
     setImportance("normal");
     setDay(opts.day ? startOfDay(opts.day) : defaultDay(now));
-    setTime(DEFAULT_TIME);
+    setPickedTime(null);
     setNoTime(inbox);
     setDueDate(opts.dueDate ? startOfDay(opts.dueDate) : null);
     setPreferredDate(null);
@@ -126,16 +127,23 @@ export function Capture({ now }: { now: Date }) {
 
   const today = useMemo(() => startOfDay(now), [now]);
   const tomorrow = useMemo(() => addDays(today, 1), [today]);
-  const start = useMemo(() => atTime(day, time), [day, time]);
+  // Where the block sits: the user's placement, or the day's first free fit.
+  // Null when nothing fits that day (or it's a day off).
+  const firstFit = useFirstFit(day, duration, now, editId ?? undefined);
+  const start = useMemo(
+    () => (pickedTime ? atTime(day, pickedTime) : firstFit),
+    [day, pickedTime, firstFit],
+  );
 
   // The chosen day's existing items (Life OS tasks + Google events).
   const dayItems = useDayItems(day);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  // Nothing may overlap — flag a clash with an existing task OR calendar event.
-  // When editing, the task doesn't clash with itself.
+  // Backstop for the Schedule button: nothing may overlap — a clash can appear
+  // after a day/duration change moves a kept time onto something else. When
+  // editing, the task doesn't clash with itself.
   const conflict = useMemo(() => {
-    if (noTime) return null;
+    if (noTime || !start) return null;
     const end = start.getTime() + duration * 60_000;
     return (
       dayItems.find((it) => {
@@ -158,9 +166,19 @@ export function Capture({ now }: { now: Date }) {
   const preferredAllowed = !dueDate || dueDate.getTime() > tomorrow.getTime();
   const effectivePreferred = noTime && preferredAllowed ? preferredDate : null;
 
+  // A kept time can land in the past after switching the day to today. Block
+  // it — except when editing a done task, where logging a past time is the point.
+  const editingCompleted = editId
+    ? allTasks.find((t) => t.id === editId)?.completed ?? false
+    : false;
+  const startInPast =
+    !noTime && !!start && start.getTime() < now.getTime() && !editingCompleted;
+
   async function confirm() {
     const title_ = title.trim();
-    if (!title_ || conflict) return;
+    // These guards live here (not only on the button): Enter in the title
+    // input also submits.
+    if (!title_ || conflict || startInPast || (!noTime && !start)) return;
     setServerError(null);
     try {
       if (editId) {
@@ -170,7 +188,7 @@ export function Capture({ now }: { now: Date }) {
           title: title_,
           durationMinutes: duration,
           importance,
-          scheduledStart: noTime ? null : start.toISOString(),
+          scheduledStart: noTime || !start ? null : start.toISOString(),
           dueDate: noTime ? (dueDate ? dueDate.toISOString() : null) : null,
           preferredDate: effectivePreferred ? effectivePreferred.toISOString() : null,
         });
@@ -179,7 +197,7 @@ export function Capture({ now }: { now: Date }) {
           title: title_,
           durationMinutes: duration,
           importance,
-          scheduledStart: noTime ? null : start,
+          scheduledStart: noTime || !start ? null : start,
           dueDate: noTime ? dueDate : null,
           preferredDate: effectivePreferred,
         });
@@ -312,8 +330,8 @@ export function Capture({ now }: { now: Date }) {
                         </div>
                       </div>
                     ) : (
-                      /* Pick a day, then choose from the times you're free that
-                         day (dodges other tasks + calendar events). */
+                      /* Pick a day, then drag the block onto a free time —
+                         it dodges other tasks + calendar events. */
                       <div className="space-y-3">
                         <DayPickerButton
                           value={day}
@@ -321,13 +339,14 @@ export function Capture({ now }: { now: Date }) {
                           label={dayLabel(day)}
                           onSelect={(d) => setDay(startOfDay(d))}
                         />
-                        <FreeSlotChips
+                        <DayPlacer
                           day={day}
                           durationMinutes={duration}
-                          excludeId={editId ?? undefined}
-                          selected={atTime(day, time)}
-                          onSelect={(s) => setTime(format(s, "HH:mm"))}
                           now={now}
+                          value={start}
+                          onChange={(s) => setPickedTime(format(s, "HH:mm"))}
+                          excludeId={editId ?? undefined}
+                          ariaLabel="Start time"
                         />
                       </div>
                     )}
@@ -336,6 +355,11 @@ export function Capture({ now }: { now: Date }) {
                 {conflict && (
                   <p className="mt-2 text-xs font-medium text-accent">
                     That overlaps “{conflict.title}” — pick another time.
+                  </p>
+                )}
+                {startInPast && !conflict && (
+                  <p className="mt-2 text-xs font-medium text-accent">
+                    That time has already passed today — drag the block to a fresh spot.
                   </p>
                 )}
                 {serverError && !conflict && (
@@ -367,14 +391,23 @@ export function Capture({ now }: { now: Date }) {
                 ) : (
                   <p className="text-sm font-medium text-muted">
                     {durationLabel(duration)}
-                    {!noTime && <span className="text-muted-soft"> · {dayLabel(day)}</span>}
+                    {!noTime && (
+                      <span className="text-muted-soft">
+                        {" "}
+                        · {dayLabel(day)}
+                        {start ? ` · ${timeLabel(start)}` : ""}
+                      </span>
+                    )}
                   </p>
                 )}
                 <div className="flex gap-2">
                   <Button variant="ghost" onClick={close}>
                     Cancel
                   </Button>
-                  <Button onClick={confirm} disabled={!title.trim() || !!conflict}>
+                  <Button
+                    onClick={confirm}
+                    disabled={!title.trim() || !!conflict || startInPast || (!noTime && !start)}
+                  >
                     {editId ? "Save changes" : noTime ? "Add to To-do" : "Schedule it"}
                   </Button>
                 </div>

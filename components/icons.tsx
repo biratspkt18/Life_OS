@@ -131,6 +131,15 @@ export function LooseEndsIcon(p: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function StatsIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M3 3v18h18" />
+      <path d="M7 15v3M12 10v8M17 6v12" />
+    </svg>
+  );
+}
+
 export function LockIcon(p: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...p}>

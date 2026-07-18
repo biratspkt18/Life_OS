@@ -7,13 +7,14 @@ import { TodayView } from "../views/TodayView";
 import { CalendarView } from "../views/CalendarView";
 import { InboxView } from "../views/InboxView";
 import { LooseEndsView } from "../views/LooseEndsView";
+import { StatsView } from "../views/StatsView";
 import { SettingsView } from "../views/SettingsView";
 import { Capture, openCapture } from "./Capture";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { RescheduleHost } from "./RescheduleModal";
-import { CalendarIcon, InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, SunIcon } from "./icons";
+import { CalendarIcon, InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, StatsIcon, SunIcon } from "./icons";
 
-type View = "today" | "calendar" | "inbox" | "loose" | "settings";
+type View = "today" | "calendar" | "inbox" | "loose" | "stats" | "settings";
 
 type IconType = ComponentType<{ className?: string }>;
 
@@ -22,6 +23,7 @@ const NAV: { key: View; label: string; Icon: IconType }[] = [
   { key: "calendar", label: "Calendar", Icon: CalendarIcon },
   { key: "inbox", label: "To-do", Icon: InboxIcon },
   { key: "loose", label: "Loose ends", Icon: LooseEndsIcon },
+  { key: "stats", label: "Stats", Icon: StatsIcon },
   { key: "settings", label: "Settings", Icon: SettingsIcon },
 ];
 
@@ -97,6 +99,7 @@ export default function Shell() {
             {view === "calendar" && <CalendarView now={now} />}
             {view === "inbox" && <InboxView now={now} />}
             {view === "loose" && <LooseEndsView now={now} />}
+            {view === "stats" && <StatsView now={now} />}
             {view === "settings" && <SettingsView />}
           </ErrorBoundary>
         </main>
