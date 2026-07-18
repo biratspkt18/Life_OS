@@ -1,12 +1,13 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useAllTasks, useExternalBusy } from "../hooks/useDb";
-import type { Settings, Task } from "../lib/types";
+import { breakdownThreshold, ENERGY_LABEL, type Settings, type Task } from "../lib/types";
 import { proposeSlot } from "../lib/schedule";
 import { ConflictError, dropTask, fetchTasks, rescheduleTask, setCompleted } from "../lib/tasks";
 import { addDays, format, isSameDay, startOfDay, whenLabel } from "../lib/dates";
-import { CheckIcon, TrashIcon } from "./icons";
+import { CheckIcon, StepsIcon, TrashIcon } from "./icons";
 import { ImportanceMark } from "./pickers";
+import { openBreakdown } from "./BreakdownModal";
 
 /**
  * Reschedule-at-login loop (brief §7). Calm, forgiving, fast — never a guilt
@@ -45,7 +46,10 @@ export function RescheduleLoop({
       if (!proposal) continue;
       // If the proposed slot was taken (e.g. a calendar event), skip and move on.
       try {
-        await rescheduleTask(t.id, proposal.start);
+        await rescheduleTask(t.id, proposal.start, {
+          proposedStart: proposal.start.toISOString(),
+          chosenVia: "quick",
+        });
       } catch {
         /* leave it for the user to re-home by hand */
       }
@@ -132,7 +136,10 @@ export function RescheduleRow({
     if (!proposal) return;
     setError(null);
     try {
-      await rescheduleTask(task.id, proposal.start);
+      await rescheduleTask(task.id, proposal.start, {
+        proposedStart: proposal.start.toISOString(),
+        chosenVia: "quick",
+      });
     } catch (err) {
       setError(
         err instanceof ConflictError
@@ -153,7 +160,11 @@ export function RescheduleRow({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[0.98rem] font-medium text-ink">{task.title}</p>
           {start && (
-            <p className="mt-0.5 text-xs text-muted">was {whenLabel(start)}</p>
+            <p className="mt-0.5 text-xs text-muted">
+              was {whenLabel(start)}
+              {task.tag && <> · {task.tag}</>}
+              {task.energy && <> · {ENERGY_LABEL[task.energy].toLowerCase()} energy</>}
+            </p>
           )}
         </div>
       </div>
@@ -175,6 +186,14 @@ export function RescheduleRow({
           >
             <CheckIcon className="h-4 w-4" /> I did this
           </button>
+          {task.deferralCount >= breakdownThreshold(settings) && (
+            <button
+              onClick={() => openBreakdown(task.id)}
+              className="btn-ghost px-3 py-1.5 text-sm"
+            >
+              <StepsIcon className="h-4 w-4" /> Break it down
+            </button>
+          )}
           <button
             onClick={() => dropTask(task.id)}
             className="btn-ghost px-3 py-1.5 text-sm text-muted"

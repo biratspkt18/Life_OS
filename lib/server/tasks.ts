@@ -4,7 +4,9 @@ import { db } from "./db";
 import { tasks } from "./db/schema";
 import * as calendar from "./calendar";
 import { findConflict, type Conflict } from "./conflicts";
-import type { Importance, Task } from "../types";
+import { freeMinutesForDay, logEvent } from "./events";
+import { computeDeferralDelta } from "../deferral";
+import type { Energy, Importance, Task, TaskEventContext, TaskEventType } from "../types";
 
 type Row = typeof tasks.$inferSelect;
 
@@ -32,6 +34,9 @@ function toTask(r: Row): Task {
     completedAt: r.completedAt,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+    tag: r.tag,
+    energy: r.energy as Energy | null,
+    deferralCount: r.deferralCount,
   };
 }
 
@@ -49,6 +54,11 @@ function getRow(userId: string, id: string): Row | undefined {
     .get();
 }
 
+export function getTask(userId: string, id: string): Task | null {
+  const row = getRow(userId, id);
+  return row ? toTask(row) : null;
+}
+
 export interface NewTaskInput {
   title: string;
   durationMinutes: number;
@@ -56,9 +66,24 @@ export interface NewTaskInput {
   scheduledStart: string | null;
   dueDate?: string | null;
   preferredDate?: string | null;
+  tag?: string | null;
+  energy?: Energy | null;
 }
 
-export async function createTask(userId: string, input: NewTaskInput): Promise<Task> {
+export interface CreateTaskOptions {
+  /** Where the task came from, for the event log. Defaults to "capture". */
+  source?: "capture" | "breakdown";
+  /** Set when this task is a breakdown step; links it to its late parent. */
+  parentTaskId?: string;
+  /** Client telemetry (what was proposed vs chosen); log-only. */
+  context?: TaskEventContext;
+}
+
+export async function createTask(
+  userId: string,
+  input: NewTaskInput,
+  opts: CreateTaskOptions = {},
+): Promise<Task> {
   const now = new Date().toISOString();
 
   // Never let a new task land on top of an existing task or calendar event.
@@ -80,8 +105,33 @@ export async function createTask(userId: string, input: NewTaskInput): Promise<T
     completedAt: null,
     createdAt: now,
     updatedAt: now,
+    tag: input.tag ?? null,
+    energy: input.energy ?? null,
+    deferralCount: 0,
   };
   db.insert(tasks).values({ ...task, userId, pingedAt: null }).run();
+
+  logEvent(userId, {
+    taskId: task.id,
+    type: "created",
+    tag: task.tag,
+    energy: task.energy,
+    payload: {
+      title: task.title,
+      durationMinutes: task.durationMinutes,
+      importance: task.importance,
+      scheduledStart: task.scheduledStart,
+      dueDate: task.dueDate,
+      preferredDate: task.preferredDate,
+      source: opts.source ?? "capture",
+      ...(opts.parentTaskId ? { parentTaskId: opts.parentTaskId } : {}),
+      freeMinutesDayApprox: freeMinutesForDay(
+        userId,
+        task.scheduledStart ? new Date(task.scheduledStart) : new Date(),
+      ),
+      ...(opts.context ? { context: opts.context } : {}),
+    },
+  });
 
   const eventId = await calendar.createEvent(userId, task);
   if (eventId) {
@@ -105,6 +155,8 @@ export type TaskPatch = Partial<
     | "preferredDate"
     | "completed"
     | "completedAt"
+    | "tag"
+    | "energy"
   >
 >;
 
@@ -112,6 +164,7 @@ export async function patchTask(
   userId: string,
   id: string,
   patch: TaskPatch,
+  context?: TaskEventContext,
 ): Promise<Task | null> {
   const existing = getRow(userId, id);
   if (!existing) return null;
@@ -119,6 +172,11 @@ export async function patchTask(
   const now = new Date().toISOString();
   const rescheduled =
     patch.scheduledStart !== undefined && patch.scheduledStart !== existing.scheduledStart;
+
+  // Server-owned deferral counter: +1 only when the user moved a date field to
+  // a different calendar day (see lib/deferral.ts for the full rule).
+  const deferralDelta = computeDeferralDelta(toTask(existing), patch);
+  const nextDeferralCount = existing.deferralCount + deferralDelta;
 
   // Keep completedAt consistent when `completed` flips and the caller didn't set it.
   let completedAt = patch.completedAt;
@@ -130,6 +188,7 @@ export async function patchTask(
     ...toTask(existing),
     ...patch,
     ...(completedAt !== undefined ? { completedAt } : {}),
+    deferralCount: nextDeferralCount,
     updatedAt: now,
   };
 
@@ -160,6 +219,9 @@ export async function patchTask(
       preferredDate: merged.preferredDate,
       completed: merged.completed,
       completedAt: merged.completedAt,
+      tag: merged.tag,
+      energy: merged.energy,
+      deferralCount: nextDeferralCount,
       googleEventId: eventId,
       updatedAt: now,
       ...(rescheduled ? { pingedAt: null } : {}),
@@ -167,13 +229,64 @@ export async function patchTask(
     .where(and(eq(tasks.id, id), eq(tasks.userId, userId)))
     .run();
 
+  // One event per patch, the most significant transition winning; the full
+  // field diff always rides in the payload so nothing is lost to the ranking.
+  const before = toTask(existing);
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of Object.keys(patch) as (keyof TaskPatch)[]) {
+    if (before[key] !== merged[key]) changes[key] = { from: before[key], to: merged[key] };
+  }
+  let type: TaskEventType;
+  if (patch.completed === true && !before.completed) type = "completed";
+  else if (patch.completed === false && before.completed) type = "uncompleted";
+  else if (deferralDelta > 0) type = "deferred";
+  else if (!before.scheduledStart && merged.scheduledStart) type = "scheduled";
+  else if (before.scheduledStart && !merged.scheduledStart && patch.scheduledStart !== undefined)
+    type = "unscheduled";
+  else if (rescheduled) type = "rescheduled";
+  else type = "edited";
+
+  logEvent(userId, {
+    taskId: id,
+    type,
+    tag: merged.tag,
+    energy: merged.energy,
+    payload: {
+      changes,
+      deferralCount: nextDeferralCount,
+      deferralDelta,
+      freeMinutesDayApprox: freeMinutesForDay(
+        userId,
+        merged.scheduledStart ? new Date(merged.scheduledStart) : new Date(),
+      ),
+      ...(context ? { context } : {}),
+    },
+  });
+
   return merged;
 }
 
-export async function deleteTask(userId: string, id: string): Promise<void> {
+export async function deleteTask(
+  userId: string,
+  id: string,
+  opts: { reason?: "breakdown" } = {},
+): Promise<void> {
   const existing = getRow(userId, id);
   if (!existing) return;
   db.delete(tasks).where(and(eq(tasks.id, id), eq(tasks.userId, userId))).run();
+  logEvent(userId, {
+    taskId: id,
+    type: "deleted",
+    tag: existing.tag,
+    energy: existing.energy as Energy | null,
+    payload: {
+      title: existing.title,
+      completed: existing.completed,
+      scheduledStart: existing.scheduledStart,
+      deferralCount: existing.deferralCount,
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    },
+  });
   if (existing.googleEventId) {
     await calendar.deleteEvent(userId, existing.googleEventId);
   }

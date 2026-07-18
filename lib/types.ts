@@ -13,6 +13,17 @@ export const IMPORTANCE_LABEL: Record<Importance, string> = {
   low: "Light",
 };
 
+/** Optional per-task energy cost. Neutral wording — a cost, not a judgment. */
+export type Energy = "low" | "medium" | "high";
+
+export const ENERGY_ORDER: readonly Energy[] = ["low", "medium", "high"];
+
+export const ENERGY_LABEL: Record<Energy, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+};
+
 export interface Task {
   id: string;
   title: string;
@@ -30,7 +41,52 @@ export interface Task {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Single user-created category, or null for untagged. */
+  tag: string | null;
+  /** Optional energy cost, or null when the user hasn't set one. */
+  energy: Energy | null;
+  /** Server-managed: how many times this moved to a different day. */
+  deferralCount: number;
   // future (NOT v1): recurrenceRule
+}
+
+/**
+ * Everything that can land in the task_events log. Most types are derived
+ * server-side from real DB transitions; only CLIENT_EVENT_TYPES may be posted
+ * directly by the browser.
+ */
+export type TaskEventType =
+  | "created"
+  | "completed"
+  | "uncompleted"
+  | "scheduled"
+  | "unscheduled"
+  | "rescheduled"
+  | "deferred"
+  | "edited"
+  | "deleted"
+  | "breakdown_generated"
+  | "broken_down"
+  | "breakdown_prompt_shown"
+  | "breakdown_dismissed";
+
+/** The only event types the client may POST to /api/events. */
+export const CLIENT_EVENT_TYPES = ["breakdown_prompt_shown", "breakdown_dismissed"] as const;
+
+export type ClientEventType = (typeof CLIENT_EVENT_TYPES)[number];
+
+/**
+ * Optional telemetry a mutation may carry so the event log can record what
+ * the app proposed vs what the user chose. Never affects the write itself;
+ * garbage is dropped, not rejected.
+ */
+export interface TaskEventContext {
+  /** The slot the app proposed at the moment of the mutation (first fit). */
+  proposedStart?: string | null;
+  /** How the user landed on the chosen slot. */
+  chosenVia?: "first_fit" | "drag" | "chip" | "exact" | "quick";
+  /** Free minutes in the target day as the client saw it (includes Google busy). */
+  freeMinutesDay?: number;
 }
 
 /**
@@ -76,6 +132,8 @@ export interface Settings {
   defaultDurationMinutes: number;
   pushEnabled: boolean;
   googleConnected: boolean;
+  /** After this many moves to another day, offer to break the task down. */
+  deferralBreakdownThreshold: number;
 }
 
 const DEFAULT_DAY_WINDOW: DayWindow = {
@@ -114,7 +172,17 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultDurationMinutes: 30,
   pushEnabled: false,
   googleConnected: false,
+  deferralBreakdownThreshold: 5,
 };
+
+/**
+ * The settings PATCH route has no validation layer, so every consumer of the
+ * threshold clamps here rather than trusting the stored blob.
+ */
+export function breakdownThreshold(settings: Settings): number {
+  const n = Math.round(Number(settings.deferralBreakdownThreshold));
+  return Number.isFinite(n) && n >= 2 ? Math.min(n, 20) : 5;
+}
 
 /** Duration presets offered at capture (brief §5A). */
 export const DURATION_PRESETS = [15, 30, 60] as const;

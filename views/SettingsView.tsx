@@ -189,6 +189,31 @@ function RootPage({
                 <span className="text-sm text-muted">min</span>
               </div>
             </div>
+
+            <div className="flex items-center justify-between gap-3 px-3.5 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-ink">Offer a breakdown after</p>
+                <p className="truncate text-xs text-muted">
+                  How many moves before suggesting smaller steps.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <input
+                  type="number"
+                  min={2}
+                  max={20}
+                  step={1}
+                  value={settings.deferralBreakdownThreshold}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isNaN(n))
+                      saveSettings({ deferralBreakdownThreshold: Math.min(20, Math.max(2, n)) });
+                  }}
+                  className="field w-20 text-right"
+                />
+                <span className="text-sm text-muted">moves</span>
+              </div>
+            </div>
           </div>
         </Group>
 

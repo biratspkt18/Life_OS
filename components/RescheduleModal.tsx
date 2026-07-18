@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { useAllTasks, useExternalBusy, useSettings } from "../hooks/useDb";
 import { ConflictError, rescheduleTask, updateTask } from "../lib/tasks";
@@ -201,17 +201,27 @@ function TimePicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // The modal's opening proposal, for the event log's proposed-vs-chosen pair.
+  const initialFitRef = useRef<Date | null>(null);
+  useEffect(() => {
+    if (!initialFitRef.current && firstFit) initialFitRef.current = firstFit;
+  }, [firstFit]);
+
   async function confirm(start: Date) {
     if (saving) return;
     setSaving(true);
     setError(null);
+    const context = {
+      proposedStart: initialFitRef.current?.toISOString() ?? null,
+      chosenVia: (pickedStart ? "drag" : "first_fit") as "drag" | "first_fit",
+    };
     try {
       if (task.completed) {
         // Logging when it happened — must NOT go through rescheduleTask, which
         // would clear `completed`.
-        await updateTask(task.id, { scheduledStart: start.toISOString() });
+        await updateTask(task.id, { scheduledStart: start.toISOString() }, context);
       } else {
-        await rescheduleTask(task.id, start);
+        await rescheduleTask(task.id, start, context);
       }
       onDone();
     } catch (err) {

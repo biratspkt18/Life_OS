@@ -1,20 +1,33 @@
 "use client";
 import { mutate } from "swr";
-import type { Importance, Settings, Task, TodayItem } from "./types";
+import type {
+  ClientEventType,
+  Energy,
+  Importance,
+  Settings,
+  Task,
+  TaskEventContext,
+  TodayItem,
+} from "./types";
 
 export const TASKS_KEY = "/api/tasks";
 export const SETTINGS_KEY = "/api/settings";
+export const TAGS_KEY = "/api/tags";
 
 /**
- * Every SWR cache that renders a task's completion state. The day views read
- * from `/api/today?…`, the month grid from `/api/range?…`, and the raw list
- * (inbox / loose ends) from `/api/tasks` — so a completion has to touch all
- * three, not just `/api/tasks`.
+ * Every SWR cache that renders task state. The day views read from
+ * `/api/today?…`, the month grid from `/api/range?…`, the raw list
+ * (inbox / loose ends) from `/api/tasks`, and the capture sheet's tag chips
+ * from `/api/tags` (derived from tasks, so any task write can change it) —
+ * a mutation has to touch all four, not just `/api/tasks`.
  */
 function isItemCacheKey(key: unknown): key is string {
   return (
     typeof key === "string" &&
-    (key === TASKS_KEY || key.startsWith("/api/today") || key.startsWith("/api/range"))
+    (key === TASKS_KEY ||
+      key === TAGS_KEY ||
+      key.startsWith("/api/today") ||
+      key.startsWith("/api/range"))
   );
 }
 
@@ -78,9 +91,14 @@ export interface NewTaskInput {
   scheduledStart: Date | null;
   dueDate?: Date | null;
   preferredDate?: Date | null;
+  tag?: string | null;
+  energy?: Energy | null;
 }
 
-export async function createTask(input: NewTaskInput): Promise<Task> {
+export async function createTask(
+  input: NewTaskInput,
+  context?: TaskEventContext,
+): Promise<Task> {
   const task = await req<Task>(TASKS_KEY, {
     method: "POST",
     body: JSON.stringify({
@@ -90,6 +108,9 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
       scheduledStart: input.scheduledStart ? input.scheduledStart.toISOString() : null,
       dueDate: input.dueDate ? input.dueDate.toISOString() : null,
       preferredDate: input.preferredDate ? input.preferredDate.toISOString() : null,
+      tag: input.tag ?? null,
+      energy: input.energy ?? null,
+      ...(context ? { context } : {}),
     }),
   });
   // Optimistically drop the new task into the raw list so the To-do list and the
@@ -129,13 +150,18 @@ export async function setCompleted(id: string, completed: boolean): Promise<void
   mutate(isItemCacheKey);
 }
 
-export async function rescheduleTask(id: string, newStart: Date): Promise<void> {
+export async function rescheduleTask(
+  id: string,
+  newStart: Date,
+  context?: TaskEventContext,
+): Promise<void> {
   await req(`${TASKS_KEY}/${id}`, {
     method: "PATCH",
     body: JSON.stringify({
       scheduledStart: newStart.toISOString(),
       completed: false,
       completedAt: null,
+      ...(context ? { context } : {}),
     }),
   });
   mutate(isItemCacheKey);
@@ -168,7 +194,11 @@ function withStart(
  * timeline settles exactly where it was dropped instead of snapping back to the
  * old slot until the refetch lands. Rolls back on error (e.g. a server 409).
  */
-export async function rescheduleTaskOptimistic(id: string, newStart: Date): Promise<void> {
+export async function rescheduleTaskOptimistic(
+  id: string,
+  newStart: Date,
+  context?: TaskEventContext,
+): Promise<void> {
   const iso = newStart.toISOString();
   await mutate(
     isItemCacheKey,
@@ -178,7 +208,12 @@ export async function rescheduleTaskOptimistic(id: string, newStart: Date): Prom
   try {
     await req(`${TASKS_KEY}/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ scheduledStart: iso, completed: false, completedAt: null }),
+      body: JSON.stringify({
+        scheduledStart: iso,
+        completed: false,
+        completedAt: null,
+        ...(context ? { context } : {}),
+      }),
     });
   } catch (err) {
     mutate(isItemCacheKey); // revert the optimistic move
@@ -187,8 +222,15 @@ export async function rescheduleTaskOptimistic(id: string, newStart: Date): Prom
   mutate(isItemCacheKey);
 }
 
-export async function updateTask(id: string, patch: Partial<Task>): Promise<void> {
-  await req(`${TASKS_KEY}/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export async function updateTask(
+  id: string,
+  patch: Partial<Task>,
+  context?: TaskEventContext,
+): Promise<void> {
+  await req(`${TASKS_KEY}/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...patch, ...(context ? { context } : {}) }),
+  });
   mutate(isItemCacheKey);
 }
 
@@ -205,4 +247,49 @@ export async function fetchTasks(): Promise<Task[]> {
 export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   await req(SETTINGS_KEY, { method: "PATCH", body: JSON.stringify(patch) });
   mutate(SETTINGS_KEY);
+}
+
+/** What /api/breakdown returns: LLM-proposed steps, or an empty manual start. */
+export interface BreakdownResult {
+  llmUsed: boolean;
+  steps: string[];
+  /** True when the LLM was configured but couldn't be reached/parsed. */
+  unavailable?: boolean;
+}
+
+export async function generateBreakdown(taskId: string): Promise<BreakdownResult> {
+  return req<BreakdownResult>("/api/breakdown", {
+    method: "POST",
+    body: JSON.stringify({ taskId }),
+  });
+}
+
+/** Turn the approved steps into real to-dos and retire the parent task. */
+export async function acceptBreakdown(
+  taskId: string,
+  steps: string[],
+  meta: { llmUsed: boolean; edited: boolean },
+): Promise<Task[]> {
+  const res = await req<{ steps: Task[] }>("/api/breakdown/accept", {
+    method: "POST",
+    body: JSON.stringify({ taskId, steps, ...meta }),
+  });
+  mutate(isItemCacheKey);
+  return res.steps;
+}
+
+/**
+ * Fire-and-forget client-side observation for the event log (whitelisted
+ * types only). Never awaited by UI code and never allowed to throw.
+ */
+export function logClientEvent(
+  type: ClientEventType,
+  taskId?: string,
+  payload?: Record<string, unknown>,
+): void {
+  fetch("/api/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type, taskId, payload }),
+  }).catch(() => {});
 }

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { Settings } from "../../types";
 
 /**
@@ -47,7 +47,39 @@ export const tasks = sqliteTable("tasks", {
   updatedAt: text("updated_at").notNull(),
   /** Set when a start-time push has been sent, so we never double-ping. */
   pingedAt: text("pinged_at"),
+  /** Single user-created category, normalized text. Null = untagged. */
+  tag: text("tag"),
+  /** Optional energy cost: "low" | "medium" | "high". Null = unset. */
+  energy: text("energy"),
+  /** Server-managed count of user moves to a different day. Never client-set. */
+  deferralCount: integer("deferral_count").notNull().default(0),
 });
+
+/**
+ * Append-only behavioral event log, one row per task lifecycle moment.
+ * `taskId` is intentionally NOT a foreign key: history must survive task
+ * deletion (breaking a task down deletes the parent). Tag/energy are
+ * denormalized snapshots at event time so later analysis joins nothing.
+ */
+export const taskEvents = sqliteTable(
+  "task_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    taskId: text("task_id"),
+    type: text("type").notNull(),
+    at: text("at").notNull(),
+    tag: text("tag"),
+    energy: text("energy"),
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>(),
+  },
+  (t) => ({
+    userAtIdx: index("task_events_user_at_idx").on(t.userId, t.at),
+    taskIdx: index("task_events_task_idx").on(t.taskId),
+  }),
+);
 
 /** Per-user app settings, stored as one JSON blob (matches the `Settings` type). */
 export const settings = sqliteTable("settings", {

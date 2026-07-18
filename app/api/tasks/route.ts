@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConflictError, createTask, listTasks } from "@/lib/server/tasks";
-import { parseNewTask } from "@/lib/server/validate";
+import { parseEventContext, parseNewTask } from "@/lib/server/validate";
 import { requireUserId } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   try {
-    const task = await createTask(userId, parsed.value);
+    const task = await createTask(userId, parsed.value, { context: parseEventContext(b.context) });
     return NextResponse.json(task);
   } catch (err) {
     if (err instanceof ConflictError) {

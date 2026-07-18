@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import useSWR from "swr";
 import { DEFAULT_SETTINGS, type Settings, type Task, type TodayItem } from "../lib/types";
 import { addDays, isSameDay, monthGrid, startOfDay, type Interval } from "../lib/dates";
-import { SETTINGS_KEY, TASKS_KEY } from "../lib/tasks";
+import { SETTINGS_KEY, TAGS_KEY, TASKS_KEY } from "../lib/tasks";
 
 const fetcher = async (url: string) => {
   const res = await fetch(url);
@@ -26,6 +26,12 @@ export function useSettings(): Settings {
     fallbackData: DEFAULT_SETTINGS,
   });
   return data ?? DEFAULT_SETTINGS;
+}
+
+/** The user's tags, most-used first (derived server-side from their tasks). */
+export function useTags(): string[] {
+  const { data } = useSWR<string[]>(TAGS_KEY, fetcher, { fallbackData: [] });
+  return data ?? [];
 }
 
 /** Today's scheduled tasks in time order. */

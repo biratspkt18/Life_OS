@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConflictError, deleteTask, patchTask } from "@/lib/server/tasks";
-import { parseTaskPatch } from "@/lib/server/validate";
+import { parseEventContext, parseTaskPatch } from "@/lib/server/validate";
 import { requireUserId } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ export async function PATCH(
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   try {
-    const task = await patchTask(userId, id, parsed.value);
+    const task = await patchTask(userId, id, parsed.value, parseEventContext(body.context));
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json(task);
   } catch (err) {

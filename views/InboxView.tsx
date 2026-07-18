@@ -5,14 +5,15 @@ import { useInboxTasks } from "../hooks/useDb";
 import { useCheckOff } from "../hooks/useCheckOff";
 import { openCapture, openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
+import { DeferralNote, openBreakdown } from "../components/BreakdownModal";
 import { ActionMenu } from "../components/ActionMenu";
 import { dropTask } from "../lib/tasks";
 import { dayLabel, durationLabel, isBefore, startOfDay } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
 import { ImportanceMark } from "../components/pickers";
-import { ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import { ClockIcon, EditIcon, StepsIcon, TrashIcon } from "../components/icons";
 import { Celebration } from "../components/Celebration";
-import type { Task } from "../lib/types";
+import { ENERGY_LABEL, type Task } from "../lib/types";
 
 /**
  * To-do list — things you mean to do but haven't put on the calendar yet. Each
@@ -143,7 +144,20 @@ function TodoRow({ task, onSchedule }: { task: Task; onSchedule: () => void }) {
               <span>prefer {dayLabel(preferred)}</span>
             </>
           )}
+          {task.tag && (
+            <>
+              <span className="text-muted-soft">·</span>
+              <span>{task.tag}</span>
+            </>
+          )}
+          {task.energy && (
+            <>
+              <span className="text-muted-soft">·</span>
+              <span>{ENERGY_LABEL[task.energy].toLowerCase()} energy</span>
+            </>
+          )}
         </p>
+        <DeferralNote task={task} />
       </div>
       <div className="relative z-10 shrink-0">
         <ActionMenu
@@ -152,6 +166,11 @@ function TodoRow({ task, onSchedule }: { task: Task; onSchedule: () => void }) {
               label: "Schedule",
               icon: <ClockIcon className="h-4 w-4" />,
               onClick: onSchedule,
+            },
+            {
+              label: "Break it down",
+              icon: <StepsIcon className="h-4 w-4" />,
+              onClick: () => openBreakdown(task.id),
             },
             {
               label: "Edit",

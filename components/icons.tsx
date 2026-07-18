@@ -35,6 +35,15 @@ export function ClockIcon(p: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** A big thing becoming smaller ones — the task-breakdown mark. */
+export function StepsIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M4 6h16M4 12h11M4 18h6" />
+    </svg>
+  );
+}
+
 export function EditIcon(p: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...p}>

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useAllTasks, useDayItems, useSettings } from "../hooks/useDb";
 import { ConflictError, createTask, dropTask, updateTask } from "../lib/tasks";
-import type { Importance } from "../lib/types";
+import { windowForDay, type Energy, type Importance, type TaskEventContext } from "../lib/types";
 import { addDays, atTime, dayLabel, durationLabel, format, startOfDay, timeLabel } from "../lib/dates";
-import { DayPickerButton, DurationPicker, ImportancePicker } from "./pickers";
+import { buildDayShape } from "../lib/dayShape";
+import { DayPickerButton, DurationPicker, EnergyPicker, ImportancePicker } from "./pickers";
 import { DayPlacer, useFirstFit } from "./DayPlacer";
+import { TagField } from "./TagField";
 import { CloseIcon, PlusIcon, TrashIcon } from "./icons";
 import { Button } from "./ui/button";
 
@@ -54,6 +56,9 @@ export function Capture({ now }: { now: Date }) {
   // To-do dates (only used when noTime). null = not set.
   const [dueDate, setDueDate] = useState<Date | null>(null);
   const [preferredDate, setPreferredDate] = useState<Date | null>(null);
+  // Optional single tag + energy cost (both clearable back to null).
+  const [tag, setTag] = useState<string | null>(null);
+  const [energy, setEnergy] = useState<Energy | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +78,8 @@ export function Capture({ now }: { now: Date }) {
       setPickedTime(scheduled ? format(scheduled, "HH:mm") : null);
       setDueDate(editTask.dueDate ? startOfDay(new Date(editTask.dueDate)) : null);
       setPreferredDate(editTask.preferredDate ? startOfDay(new Date(editTask.preferredDate)) : null);
+      setTag(editTask.tag);
+      setEnergy(editTask.energy);
       setOpen(true);
       requestAnimationFrame(() => inputRef.current?.focus());
       return;
@@ -89,6 +96,8 @@ export function Capture({ now }: { now: Date }) {
     setNoTime(inbox);
     setDueDate(opts.dueDate ? startOfDay(opts.dueDate) : null);
     setPreferredDate(null);
+    setTag(null);
+    setEnergy(null);
     setOpen(true);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
@@ -180,27 +189,53 @@ export function Capture({ now }: { now: Date }) {
     // input also submits.
     if (!title_ || conflict || startInPast || (!noTime && !start)) return;
     setServerError(null);
+    // Telemetry for the event log: what the placer proposed vs where the
+    // user actually put it, and how full the day looked at the time.
+    const context: TaskEventContext | undefined = noTime
+      ? undefined
+      : {
+          proposedStart: firstFit ? firstFit.toISOString() : null,
+          chosenVia: pickedTime ? "drag" : "first_fit",
+          freeMinutesDay: buildDayShape(
+            dayItems,
+            windowForDay(settings, day),
+            day,
+            now,
+            settings.defaultDurationMinutes,
+          ).freeMinutes,
+        };
     try {
       if (editId) {
         // Edit in place. `completed`/`completedAt` are left untouched, so a
         // finished task stays finished after an edit.
-        await updateTask(editId, {
-          title: title_,
-          durationMinutes: duration,
-          importance,
-          scheduledStart: noTime || !start ? null : start.toISOString(),
-          dueDate: noTime ? (dueDate ? dueDate.toISOString() : null) : null,
-          preferredDate: effectivePreferred ? effectivePreferred.toISOString() : null,
-        });
+        await updateTask(
+          editId,
+          {
+            title: title_,
+            durationMinutes: duration,
+            importance,
+            scheduledStart: noTime || !start ? null : start.toISOString(),
+            dueDate: noTime ? (dueDate ? dueDate.toISOString() : null) : null,
+            preferredDate: effectivePreferred ? effectivePreferred.toISOString() : null,
+            tag,
+            energy,
+          },
+          context,
+        );
       } else {
-        await createTask({
-          title: title_,
-          durationMinutes: duration,
-          importance,
-          scheduledStart: noTime || !start ? null : start,
-          dueDate: noTime ? dueDate : null,
-          preferredDate: effectivePreferred,
-        });
+        await createTask(
+          {
+            title: title_,
+            durationMinutes: duration,
+            importance,
+            scheduledStart: noTime || !start ? null : start,
+            dueDate: noTime ? dueDate : null,
+            preferredDate: effectivePreferred,
+            tag,
+            energy,
+          },
+          context,
+        );
       }
       close();
     } catch (err) {
@@ -376,6 +411,16 @@ export function Capture({ now }: { now: Date }) {
                 <div>
                   <FieldLabel>How important?</FieldLabel>
                   <ImportancePicker value={importance} onChange={setImportance} />
+                </div>
+
+                <div>
+                  <FieldLabel>Tag</FieldLabel>
+                  <TagField value={tag} onChange={setTag} />
+                </div>
+
+                <div>
+                  <FieldLabel>Energy it needs</FieldLabel>
+                  <EnergyPicker value={energy} onChange={setEnergy} />
                 </div>
               </div>
 

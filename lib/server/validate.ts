@@ -1,4 +1,5 @@
-import type { Importance } from "../types";
+import type { Energy, Importance, TaskEventContext } from "../types";
+import { MAX_TAG_CHARS, normalizeTag } from "../tags";
 import type { NewTaskInput } from "./tasks";
 import type { TaskPatch } from "./tasks";
 
@@ -52,6 +53,25 @@ function importance(v: unknown): Validated<Importance> {
   return { ok: true, value: v as Importance };
 }
 
+const ENERGIES: readonly Energy[] = ["low", "medium", "high"];
+
+/** Energy is optional: null/undefined clears it, otherwise it must be valid. */
+function energy(v: unknown): Validated<Energy | null> {
+  if (v === null || v === undefined) return { ok: true, value: null };
+  if (!ENERGIES.includes(v as Energy)) {
+    return fail(`energy must be one of ${ENERGIES.join(", ")} or null`);
+  }
+  return { ok: true, value: v as Energy };
+}
+
+/** Tag is optional: null/undefined clears it; a present string must normalize. */
+function tag(v: unknown): Validated<string | null> {
+  if (v === null || v === undefined) return { ok: true, value: null };
+  const t = normalizeTag(v);
+  if (t === null) return fail(`tag must be 1–${MAX_TAG_CHARS} characters`);
+  return { ok: true, value: t };
+}
+
 /** Validate a POST /api/tasks body into a clean NewTaskInput. */
 export function parseNewTask(b: Record<string, unknown>): Validated<NewTaskInput> {
   const t = title(b.title);
@@ -66,6 +86,10 @@ export function parseNewTask(b: Record<string, unknown>): Validated<NewTaskInput
   if (!dueDate.ok) return dueDate;
   const preferredDate = isoOrNull(b.preferredDate, "preferredDate");
   if (!preferredDate.ok) return preferredDate;
+  const tg = tag(b.tag);
+  if (!tg.ok) return tg;
+  const en = energy(b.energy);
+  if (!en.ok) return en;
   return {
     ok: true,
     value: {
@@ -75,6 +99,8 @@ export function parseNewTask(b: Record<string, unknown>): Validated<NewTaskInput
       scheduledStart: scheduledStart.value,
       dueDate: dueDate.value,
       preferredDate: preferredDate.value,
+      tag: tg.value,
+      energy: en.value,
     },
   };
 }
@@ -102,6 +128,16 @@ export function parseTaskPatch(b: Record<string, unknown>): Validated<TaskPatch>
     if (typeof b.completed !== "boolean") return fail("completed must be a boolean");
     patch.completed = b.completed;
   }
+  if ("tag" in b) {
+    const t = tag(b.tag);
+    if (!t.ok) return t;
+    patch.tag = t.value;
+  }
+  if ("energy" in b) {
+    const en = energy(b.energy);
+    if (!en.ok) return en;
+    patch.energy = en.value;
+  }
   for (const field of ["scheduledStart", "dueDate", "preferredDate", "completedAt"] as const) {
     if (field in b) {
       const v = isoOrNull(b[field], field);
@@ -112,6 +148,57 @@ export function parseTaskPatch(b: Record<string, unknown>): Validated<TaskPatch>
 
   if (Object.keys(patch).length === 0) return fail("no recognized fields to update");
   return { ok: true, value: patch };
+}
+
+/** Validate a POST /api/breakdown/accept body. */
+export function parseBreakdownAccept(b: Record<string, unknown>): Validated<{
+  taskId: string;
+  steps: string[];
+  llmUsed: boolean;
+  edited: boolean;
+}> {
+  if (typeof b.taskId !== "string" || !b.taskId) return fail("taskId required");
+  if (!Array.isArray(b.steps)) return fail("steps must be an array");
+  const steps: string[] = [];
+  for (const s of b.steps) {
+    const t = title(s);
+    if (!t.ok) return t;
+    steps.push(t.value);
+  }
+  if (steps.length < 1) return fail("at least one step required");
+  if (steps.length > 8) return fail("at most 8 steps");
+  return {
+    ok: true,
+    value: {
+      taskId: b.taskId,
+      steps,
+      llmUsed: b.llmUsed === true,
+      edited: b.edited === true,
+    },
+  };
+}
+
+const CHOSEN_VIA = ["first_fit", "drag", "chip", "exact", "quick"] as const;
+
+/**
+ * Sanitize the optional telemetry `context` a mutation body may carry.
+ * Context is observation, not data: unknown keys are dropped and garbage
+ * yields `undefined` — it must never turn a valid write into a 400.
+ */
+export function parseEventContext(v: unknown): TaskEventContext | undefined {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const b = v as Record<string, unknown>;
+  const ctx: TaskEventContext = {};
+  if (b.proposedStart === null) ctx.proposedStart = null;
+  else if (typeof b.proposedStart === "string" && !Number.isNaN(new Date(b.proposedStart).getTime())) {
+    ctx.proposedStart = new Date(b.proposedStart).toISOString();
+  }
+  if (CHOSEN_VIA.includes(b.chosenVia as (typeof CHOSEN_VIA)[number])) {
+    ctx.chosenVia = b.chosenVia as TaskEventContext["chosenVia"];
+  }
+  const mins = Math.round(Number(b.freeMinutesDay));
+  if (Number.isFinite(mins) && mins >= 0 && mins <= 1440) ctx.freeMinutesDay = mins;
+  return Object.keys(ctx).length > 0 ? ctx : undefined;
 }
 
 /** Validate the start/end query params shared by /api/today and /api/range. */

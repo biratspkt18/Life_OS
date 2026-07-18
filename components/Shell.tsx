@@ -12,6 +12,7 @@ import { SettingsView } from "../views/SettingsView";
 import { Capture, openCapture } from "./Capture";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { RescheduleHost } from "./RescheduleModal";
+import { BreakdownHost } from "./BreakdownModal";
 import { CalendarIcon, InboxIcon, LooseEndsIcon, PlusIcon, SettingsIcon, StatsIcon, SunIcon } from "./icons";
 
 type View = "today" | "calendar" | "inbox" | "loose" | "stats" | "settings";
@@ -121,6 +122,7 @@ export default function Shell() {
 
       <Capture now={now} />
       <RescheduleHost now={now} />
+      <BreakdownHost />
     </div>
   );
 }

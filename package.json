@@ -18,7 +18,7 @@
     "seed-missed-dates": "tsx scripts/seed-missed-dates.mts",
     "seed-today": "tsx scripts/seed-today.mts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/brain.test.mts && tsx scripts/placement.test.mts"
+    "test": "tsx scripts/brain.test.mts && tsx scripts/placement.test.mts && tsx scripts/deferral.test.mts && tsx scripts/breakdown.test.mts && tsx scripts/tags.test.mts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

@@ -8,11 +8,12 @@ import { dayLabel, durationLabel, format } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
 import { openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
+import { DeferralNote, openBreakdown } from "../components/BreakdownModal";
 import { NewDateModal } from "../components/NewDateModal";
 import { ActionMenu } from "../components/ActionMenu";
-import { CalendarIcon, ClockIcon, EditIcon, TrashIcon } from "../components/icons";
+import { CalendarIcon, ClockIcon, EditIcon, StepsIcon, TrashIcon } from "../components/icons";
 import { Celebration } from "../components/Celebration";
-import type { Task } from "../lib/types";
+import { ENERGY_LABEL, type Task } from "../lib/types";
 
 type MissedKind = "due" | "preferred";
 
@@ -102,6 +103,11 @@ function LooseEndRow({ end, onNewDate }: { end: LooseEnd; onNewDate?: () => void
         ]
       : []),
     {
+      label: "Break it down",
+      icon: <StepsIcon className="h-4 w-4" />,
+      onClick: () => openBreakdown(task.id),
+    },
+    {
       label: "Edit",
       icon: <EditIcon className="h-4 w-4" />,
       onClick: () => openEdit(task.id),
@@ -164,7 +170,20 @@ function LooseEndRow({ end, onNewDate }: { end: LooseEnd; onNewDate?: () => void
           )}
           <span className="mx-1.5 text-muted-soft">·</span>~
           {durationLabel(task.durationMinutes)}
+          {task.tag && (
+            <>
+              <span className="mx-1.5 text-muted-soft">·</span>
+              {task.tag}
+            </>
+          )}
+          {task.energy && (
+            <>
+              <span className="mx-1.5 text-muted-soft">·</span>
+              {ENERGY_LABEL[task.energy].toLowerCase()} energy
+            </>
+          )}
         </p>
+        <DeferralNote task={task} />
       </div>
       <div className="relative z-10 flex shrink-0 items-center">
         <ActionMenu actions={actions} />

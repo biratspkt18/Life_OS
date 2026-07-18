@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CalendarIcon } from "./icons";
-import { IMPORTANCE_LABEL, type Importance } from "../lib/types";
+import { ENERGY_LABEL, ENERGY_ORDER, IMPORTANCE_LABEL, type Energy, type Importance } from "../lib/types";
 import {
   addMonths,
   durationLabel,
@@ -197,6 +197,37 @@ export function ImportancePicker({
           {IMPORTANCE_LABEL[imp]}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Optional energy cost, phrased as what the task asks of you — never a
+ * judgment. Tapping the active chip clears it back to unset.
+ */
+export function EnergyPicker({
+  value,
+  onChange,
+}: {
+  value: Energy | null;
+  onChange: (v: Energy | null) => void;
+}) {
+  return (
+    <div className="flex gap-2">
+      {ENERGY_ORDER.map((level) => {
+        const active = value === level;
+        return (
+          <button
+            key={level}
+            type="button"
+            onClick={() => onChange(active ? null : level)}
+            aria-pressed={active}
+            className={`chip ${active ? "chip-active" : ""}`}
+          >
+            {ENERGY_LABEL[level]}
+          </button>
+        );
+      })}
     </div>
   );
 }

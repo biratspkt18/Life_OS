@@ -31,6 +31,9 @@ function mkTask(p: Partial<Task>): Task {
     completedAt: null,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
+    tag: p.tag ?? null,
+    energy: p.energy ?? null,
+    deferralCount: p.deferralCount ?? 0,
   };
 }
 
