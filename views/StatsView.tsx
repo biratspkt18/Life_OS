@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import { motion } from "motion/react";
 import { useAllTasks } from "../hooks/useDb";
-import { computeStats, RECENT_DAYS, type DayCount } from "../lib/stats";
+import { computeStats, computeTagStats, RECENT_DAYS, type DayCount, type TagStat } from "../lib/stats";
 import { compactDuration } from "../lib/dayShape";
 import { format } from "../lib/dates";
 import { StatsIcon } from "../components/icons";
@@ -15,6 +15,7 @@ import { StatsIcon } from "../components/icons";
 export function StatsView({ now }: { now: Date }) {
   const tasks = useAllTasks();
   const s = useMemo(() => computeStats(tasks, now), [tasks, now]);
+  const tagStats = useMemo(() => computeTagStats(tasks), [tasks]);
 
   if (s.totalTasks === 0) {
     return (
@@ -86,6 +87,9 @@ export function StatsView({ now }: { now: Date }) {
       {/* Recent activity. */}
       <ActivityStrip recent={s.recent} />
 
+      {/* Per-tag breakdown. */}
+      {tagStats.length > 0 && <TagBreakdown tags={tagStats} />}
+
       {/* Everything else. */}
       <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
         <Tile value={s.completedThisWeek} label="done this week" />
@@ -146,6 +150,66 @@ function Tile({ value, label }: { value: number | string; label: string }) {
     <div className="rounded-xl border border-paper-edge bg-paper-card px-3 py-3 shadow-card">
       <p className="font-display text-2xl font-bold tabular-nums text-ink">{value}</p>
       <p className="mt-0.5 text-xs text-muted">{label}</p>
+    </div>
+  );
+}
+
+/** How many tags to show before collapsing the rest into a count. */
+const MAX_TAGS = 10;
+
+function TagBreakdown({ tags }: { tags: TagStat[] }) {
+  const shown = tags.slice(0, MAX_TAGS);
+  const hidden = tags.length - shown.length;
+  const maxTotal = Math.max(1, ...tags.map((t) => t.total));
+
+  return (
+    <div className="mt-3 rounded-2xl border border-paper-edge bg-paper-card p-4 shadow-card">
+      <div className="mb-3 flex items-baseline justify-between">
+        <p className="text-sm font-medium text-ink">By tag</p>
+        <p className="text-xs text-muted">
+          <span className="font-medium text-ink">{tags.length}</span>{" "}
+          {tags.length === 1 ? "tag" : "tags"}
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {shown.map((t, i) => {
+          const rate = Math.round(t.completionRate * 100);
+          return (
+            <div key={t.tag}>
+              <div className="mb-1 flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-medium text-ink">{t.tag}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted">
+                  {t.completed}/{t.total} done
+                  {t.minutesInvested > 0 && (
+                    <>
+                      <span className="mx-1 text-muted-soft">·</span>
+                      {compactDuration(t.minutesInvested)}
+                    </>
+                  )}
+                </span>
+              </div>
+              {/* Bar length = share of your busiest tag; fill = how much is done. */}
+              <div
+                className="h-2 overflow-hidden rounded-full bg-paper-edge"
+                style={{ width: `${Math.max(12, (t.total / maxTotal) * 100)}%` }}
+                title={`${rate}% complete`}
+              >
+                <motion.div
+                  className="h-full rounded-full bg-accent"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${rate}%` }}
+                  transition={{ type: "spring", stiffness: 120, damping: 20, delay: i * 0.03 }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hidden > 0 && (
+        <p className="mt-3 text-xs text-muted-soft">+{hidden} more {hidden === 1 ? "tag" : "tags"}</p>
+      )}
     </div>
   );
 }

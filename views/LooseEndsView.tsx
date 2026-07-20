@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMissedTodos, usePastUndoneTasks } from "../hooks/useDb";
 import { useCheckOff } from "../hooks/useCheckOff";
+import { SearchField, matchesQuery } from "../components/SearchField";
 import { dropTask } from "../lib/tasks";
 import { dayLabel, durationLabel, format } from "../lib/dates";
 import { Checkbox } from "../components/Checkbox";
@@ -36,6 +37,7 @@ export function LooseEndsView({ now }: { now: Date }) {
   const slipped = usePastUndoneTasks(now);
   const missed = useMissedTodos(now);
   const [fix, setFix] = useState<{ id: string; kind: MissedKind } | null>(null);
+  const [query, setQuery] = useState("");
 
   // One list, most-slipped first. A task is never in both sources: slipped ones
   // have a scheduledStart, missed to-dos never do.
@@ -46,6 +48,11 @@ export function LooseEndsView({ now }: { now: Date }) {
         ...missed.map((m) => ({ task: m.task, missed: m.missed, when: m.when })),
       ].sort((a, b) => a.when.getTime() - b.when.getTime()),
     [slipped, missed],
+  );
+
+  const results = useMemo(
+    () => ends.filter((e) => matchesQuery(query, e.task.title, e.task.tag)),
+    [ends, query],
   );
 
   const fixEnd = fix ? ends.find((e) => e.task.id === fix.id) ?? null : null;
@@ -60,12 +67,20 @@ export function LooseEndsView({ now }: { now: Date }) {
         </p>
       </header>
 
+      {ends.length > 0 && (
+        <SearchField value={query} onChange={setQuery} placeholder="Search loose ends…" />
+      )}
+
       {ends.length === 0 ? (
         <Celebration title="All tied up." sub="Nothing slipped past. Nice." />
+      ) : results.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-paper-edge bg-paper-deep/30 px-4 py-8 text-center text-sm text-muted">
+          Nothing here matches “{query.trim()}”.
+        </p>
       ) : (
         <div className="space-y-2.5">
           <AnimatePresence initial={false}>
-            {ends.map((e) => (
+            {results.map((e) => (
               <LooseEndRow
                 key={e.task.id}
                 end={e}

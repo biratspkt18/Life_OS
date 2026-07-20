@@ -17,6 +17,15 @@ export function PlusIcon(p: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function SearchIcon(p: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...p}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </svg>
+  );
+}
+
 export function SettingsIcon(p: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base} {...p}>

@@ -35,6 +35,51 @@ export interface Stats {
   recent: DayCount[];
 }
 
+/** One tag's slice of the work, for the "By tag" breakdown. */
+export interface TagStat {
+  tag: string;
+  /** Tasks carrying this tag (scheduled or to-do). */
+  total: number;
+  /** …of which are checked off. */
+  completed: number;
+  /** completed / total, 0–1. */
+  completionRate: number;
+  /** Summed duration of this tag's completed tasks, in minutes. */
+  minutesInvested: number;
+}
+
+/**
+ * Per-tag breakdown of the whole task list. Untagged tasks are skipped (there's
+ * no "none" bucket — the headline stats already cover the total). Ranked by
+ * volume, then by how much got finished, then name — so the tags you lean on
+ * most sit at the top. Pure, like `computeStats`.
+ */
+export function computeTagStats(tasks: Task[]): TagStat[] {
+  const byTag = new Map<string, { total: number; completed: number; minutes: number }>();
+  for (const t of tasks) {
+    if (!t.tag) continue;
+    const e = byTag.get(t.tag) ?? { total: 0, completed: 0, minutes: 0 };
+    e.total += 1;
+    if (t.completed) {
+      e.completed += 1;
+      e.minutes += t.durationMinutes;
+    }
+    byTag.set(t.tag, e);
+  }
+  return [...byTag.entries()]
+    .map(([tag, e]) => ({
+      tag,
+      total: e.total,
+      completed: e.completed,
+      completionRate: e.total > 0 ? e.completed / e.total : 0,
+      minutesInvested: e.minutes,
+    }))
+    .sort(
+      (a, b) =>
+        b.total - a.total || b.completed - a.completed || a.tag.localeCompare(b.tag),
+    );
+}
+
 /** How many days the activity strip covers. */
 export const RECENT_DAYS = 14;
 

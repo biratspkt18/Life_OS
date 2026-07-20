@@ -32,6 +32,47 @@ function spansOf(shape: DayShape): Span[] {
   }));
 }
 
+/** A free stretch of the day, and whether the pending task actually fits in it. */
+interface FreeZone {
+  startMin: number;
+  endMin: number;
+  fits: boolean;
+}
+
+/**
+ * The open gaps between busy spans (past the placement floor). Drives the
+ * purple "you can drop here" bands on the track — only gaps wide enough for the
+ * task get `fits: true`, so purple always means "this task fits here".
+ */
+function freeZonesMin(
+  spans: Span[],
+  minStartMin: number,
+  windowMinutes: number,
+  durationMin: number,
+): FreeZone[] {
+  const busy = spans
+    .map((s) => ({ start: Math.max(s.startMin, minStartMin), end: s.endMin }))
+    .filter((s) => s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+  // Merge overlaps so adjacent/stacked blocks read as one wall.
+  const merged: { start: number; end: number }[] = [];
+  for (const b of busy) {
+    const last = merged[merged.length - 1];
+    if (last && b.start <= last.end) last.end = Math.max(last.end, b.end);
+    else merged.push({ ...b });
+  }
+  const zones: FreeZone[] = [];
+  let cursor = minStartMin;
+  for (const b of merged) {
+    if (b.start > cursor) zones.push({ startMin: cursor, endMin: Math.min(b.start, windowMinutes), fits: false });
+    cursor = Math.max(cursor, b.end);
+  }
+  if (cursor < windowMinutes) zones.push({ startMin: cursor, endMin: windowMinutes, fits: false });
+  return zones
+    .filter((z) => z.endMin > z.startMin)
+    .map((z) => ({ ...z, fits: z.endMin - z.startMin >= durationMin }));
+}
+
 /** Placement floor: on today nothing lands before `now` (rounded up to the grid). */
 function minStartFor(windowStart: Date, day: Date, now: Date): number {
   if (startOfDay(day).getTime() !== startOfDay(now).getTime()) return 0;
@@ -169,6 +210,12 @@ export function DayPlacer({
         windowStartMinOfDay: windowStart.getHours() * 60 + windowStart.getMinutes(),
       }),
     [spans, windowMinutes, durationMin, minStart, windowStart],
+  );
+  // Purple "open time" bands: gaps the task fits into. Recomputed as duration
+  // or the day's blocks change, so the signposting always reflects this task.
+  const freeZones = useMemo(
+    () => freeZonesMin(spans, minStart, windowMinutes, durationMin),
+    [spans, minStart, windowMinutes, durationMin],
   );
 
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -423,9 +470,26 @@ export function DayPlacer({
           )}
         </div>
 
-        {/* Existing blocks — read-only context; they lift out of the ghost's way. */}
+        {/* Open-time bands: purple where THIS task fits — "you can drop here". */}
+        {freeZones
+          .filter((z) => z.fits)
+          .map((z) => (
+            <div
+              key={`free-${z.startMin}`}
+              aria-hidden
+              className="absolute top-1 bottom-1 rounded-[3px] bg-accent/[0.12] ring-1 ring-inset ring-accent/25"
+              style={{
+                left: `${(z.startMin / windowMinutes) * 100}%`,
+                width: `calc(${((z.endMin - z.startMin) / windowMinutes) * 100}% - 1px)`,
+              }}
+            />
+          ))}
+
+        {/* Existing blocks — read-only context; they lift out of the ghost's
+            way, and turn red as the walls you're colliding with mid-drag. */}
         {shape.blocks.map((b) => {
           const lifted = liftedIds.includes(b.item.id);
+          const colliding = !!drag?.conflict && lifted;
           return (
             <motion.div
               key={b.item.id}
@@ -433,8 +497,12 @@ export function DayPlacer({
               title={b.item.title}
               className={[
                 "absolute top-1 bottom-1 rounded-[3px]",
-                lifted ? "z-20 shadow-lift ring-1 ring-ink/10" : "",
-                segClasses(b),
+                colliding
+                  ? "z-20 shadow-lift ring-2 ring-danger/60"
+                  : lifted
+                    ? "z-20 shadow-lift ring-1 ring-ink/10"
+                    : "",
+                colliding ? "bg-danger/70" : segClasses(b),
               ].join(" ")}
               style={{ left: `${b.topPct}%`, width: `calc(${b.heightPct}% - 2px)`, minWidth: 4 }}
               animate={{ y: lifted ? -LIFT_PX : 0 }}
@@ -473,7 +541,17 @@ export function DayPlacer({
               y: reduceMotion ? { duration: 0 } : SETTLE,
               default: reduceMotion ? { duration: 0 } : SETTLE,
             }}
-          />
+          >
+            {/* Grip — signals "this is the block you drag". */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 flex items-center justify-center gap-[3px] opacity-80"
+            >
+              <span className="h-2.5 w-[2px] rounded-full bg-white/80" />
+              <span className="h-2.5 w-[2px] rounded-full bg-white/80" />
+              <span className="h-2.5 w-[2px] rounded-full bg-white/80" />
+            </span>
+          </motion.button>
         )}
 
         {/* Live readout that tracks the drag — the exact time it'll land on. */}
@@ -531,6 +609,14 @@ export function DayPlacer({
           ))}
       </div>
 
+      {/* Signpost the interaction — the bar isn't obviously draggable on its own. */}
+      {!noRoom && !typed && ghostMin != null && (
+        <p className="mt-2 text-xs text-muted">
+          Drag the block to an{" "}
+          <span className="font-medium text-accent">open slot</span>
+          {showSuggestions ? ", or tap a suggested time below" : ""}.
+        </p>
+      )}
       {typedNote && <p className="mt-2 text-xs font-medium text-danger">{typedNote}</p>}
       {noRoom && (
         <p className="mt-2 rounded-xl border border-dashed border-paper-edge bg-paper-deep/30 px-3 py-2.5 text-center text-xs text-muted">

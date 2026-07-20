@@ -8,46 +8,43 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Warm paper — Cue palette. Never stark white.
+        // Cue palette, driven by CSS variables in globals.css so the whole
+        // palette flips light↔dark from one place. Channel form
+        // (`rgb(var(--x) / <alpha-value>)`) keeps Tailwind's `/opacity`
+        // modifiers (e.g. `bg-accent/60`) working.
         paper: {
-          DEFAULT: "#F7F5EE",
-          deep: "#F2EFE6",
-          edge: "#E6E1D4",
-          card: "#FFFDF8",
+          DEFAULT: "rgb(var(--paper) / <alpha-value>)",
+          deep: "rgb(var(--paper-deep) / <alpha-value>)",
+          edge: "rgb(var(--paper-edge) / <alpha-value>)",
+          card: "rgb(var(--paper-card) / <alpha-value>)",
         },
-        // Soft near-black for text — never #000.
         ink: {
-          DEFAULT: "#26262B",
-          soft: "#4A4A50",
+          DEFAULT: "rgb(var(--ink) / <alpha-value>)",
+          soft: "rgb(var(--ink-soft) / <alpha-value>)",
         },
-        // Cue indigo accent.
         accent: {
-          DEFAULT: "#4A5491",
-          soft: "#3A4180",
-          wash: "#ECEAF4",
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          soft: "rgb(var(--accent-soft) / <alpha-value>)",
+          wash: "rgb(var(--accent-wash) / <alpha-value>)",
         },
-        // Gold — calendar / locked / "from elsewhere" items.
         gold: {
-          DEFAULT: "#D9B36A",
-          soft: "#B07D28",
-          wash: "#F7F0DC",
+          DEFAULT: "rgb(var(--gold) / <alpha-value>)",
+          soft: "rgb(var(--gold-soft) / <alpha-value>)",
+          wash: "rgb(var(--gold-wash) / <alpha-value>)",
         },
-        // Green — done / synced.
         sage: {
-          DEFAULT: "#6F8F73",
-          soft: "#557A5A",
-          wash: "#EAF1E6",
+          DEFAULT: "rgb(var(--sage) / <alpha-value>)",
+          soft: "rgb(var(--sage-soft) / <alpha-value>)",
+          wash: "rgb(var(--sage-wash) / <alpha-value>)",
         },
-        // Muted grey for secondary text.
         muted: {
-          DEFAULT: "#6B6962",
-          soft: "#9A978F",
+          DEFAULT: "rgb(var(--muted) / <alpha-value>)",
+          soft: "rgb(var(--muted-soft) / <alpha-value>)",
         },
-        // Warm terracotta — destructive actions (delete). Never a stark red.
         danger: {
-          DEFAULT: "#B4553F",
-          soft: "#8F3F2D",
-          wash: "#F6E7E1",
+          DEFAULT: "rgb(var(--danger) / <alpha-value>)",
+          soft: "rgb(var(--danger-soft) / <alpha-value>)",
+          wash: "rgb(var(--danger-wash) / <alpha-value>)",
         },
       },
       fontFamily: {

@@ -3,8 +3,85 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Cue palette as RGB *channels* (space-separated, no rgb()) so Tailwind's
+   * `/opacity` modifiers keep working via `rgb(var(--x) / <alpha-value>)` in
+   * tailwind.config.js. Light is the default; `[data-theme="dark"]` re-points
+   * every token to a warm-charcoal dark set. The inline script in layout.tsx
+   * stamps the attribute before first paint, so there's no flash.
+   */
   :root {
     color-scheme: light;
+
+    --paper: 247 245 238;
+    --paper-deep: 242 239 230;
+    --paper-edge: 230 225 212;
+    --paper-card: 255 253 248;
+    --paper-grad-top: 249 247 240;
+    --paper-grad-bottom: 242 239 230;
+
+    --ink: 38 38 43;
+    --ink-soft: 74 74 80;
+
+    --accent: 74 84 145;
+    --accent-soft: 58 65 128;
+    --accent-wash: 236 234 244;
+
+    --gold: 217 179 106;
+    --gold-soft: 176 125 40;
+    --gold-wash: 247 240 220;
+
+    --sage: 111 143 115;
+    --sage-soft: 85 122 90;
+    --sage-wash: 234 241 230;
+
+    --muted: 107 105 98;
+    --muted-soft: 154 151 143;
+
+    --danger: 180 85 63;
+    --danger-soft: 143 63 45;
+    --danger-wash: 246 231 225;
+
+    /* Grain sits well over warm cream via multiply. */
+    --grain-blend: multiply;
+    --grain-opacity: 0.05;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --paper: 27 26 23;
+    --paper-deep: 21 20 16;
+    --paper-edge: 52 50 44;
+    --paper-card: 35 35 32;
+    --paper-grad-top: 30 29 25;
+    --paper-grad-bottom: 22 21 17;
+
+    --ink: 236 232 224;
+    --ink-soft: 184 180 170;
+
+    --accent: 124 134 202;
+    --accent-soft: 146 155 214;
+    --accent-wash: 37 40 62;
+
+    --gold: 199 158 82;
+    --gold-soft: 224 190 132;
+    --gold-wash: 46 39 23;
+
+    --sage: 127 163 131;
+    --sage-soft: 155 190 159;
+    --sage-wash: 28 42 29;
+
+    --muted: 160 156 147;
+    --muted-soft: 118 114 105;
+
+    --danger: 205 116 92;
+    --danger-soft: 224 150 128;
+    --danger-wash: 46 27 21;
+
+    /* Over dark, multiply hides the noise — soft-light keeps a faint tooth. */
+    --grain-blend: soft-light;
+    --grain-opacity: 0.07;
   }
 
   html,
@@ -15,9 +92,13 @@
 
   body {
     @apply bg-paper text-ink font-sans antialiased;
-    /* Warm paper gradient (Cue) as the base surface. */
-    background-color: #f7f5ee;
-    background-image: linear-gradient(180deg, #f9f7f0 0%, #f2efe6 100%);
+    /* Warm paper gradient (Cue) as the base surface — theme-aware. */
+    background-color: rgb(var(--paper));
+    background-image: linear-gradient(
+      180deg,
+      rgb(var(--paper-grad-top)) 0%,
+      rgb(var(--paper-grad-bottom)) 100%
+    );
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -35,12 +116,12 @@
   /* Calm, predictable focus — indigo ring, never harsh. */
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #f7f5ee, 0 0 0 4px rgba(74, 84, 145, 0.45);
+    box-shadow: 0 0 0 2px rgb(var(--paper)), 0 0 0 4px rgb(var(--accent) / 0.5);
     border-radius: 0.5rem;
   }
 
   ::selection {
-    background: rgba(74, 84, 145, 0.16);
+    background: rgb(var(--accent) / 0.18);
   }
 }
 
@@ -56,8 +137,8 @@
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.05;
-    mix-blend-mode: multiply;
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 220px 220px;
   }
@@ -65,7 +146,7 @@
   /* A card surface — warm, soft, optionally carrying a touch of grain. */
   .surface {
     @apply rounded-2xl bg-paper-card shadow-card;
-    border: 1px solid rgba(230, 225, 212, 0.8);
+    border: 1px solid rgb(var(--paper-edge) / 0.8);
   }
 
   /* Quiet, standard buttons. */

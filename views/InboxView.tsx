@@ -1,8 +1,9 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useInboxTasks } from "../hooks/useDb";
 import { useCheckOff } from "../hooks/useCheckOff";
+import { SearchField, matchesQuery } from "../components/SearchField";
 import { openCapture, openEdit } from "../components/Capture";
 import { openReschedule } from "../components/RescheduleModal";
 import { DeferralNote, openBreakdown } from "../components/BreakdownModal";
@@ -27,6 +28,7 @@ import { ENERGY_LABEL, type Task } from "../lib/types";
 export function InboxView({ now }: { now: Date }) {
   const tasks = useInboxTasks();
   const todayStart = useMemo(() => startOfDay(now), [now]);
+  const [query, setQuery] = useState("");
 
   // Soonest due date first; undated to-dos fall to the bottom (newest first).
   // Anything whose due/preferred date already slipped lives in Loose ends now.
@@ -43,6 +45,11 @@ export function InboxView({ now }: { now: Date }) {
     });
     return { sorted: kept, slippedCount: tasks.length - kept.length };
   }, [tasks, todayStart]);
+
+  const results = useMemo(
+    () => sorted.filter((t) => matchesQuery(query, t.title, t.tag)),
+    [sorted, query],
+  );
 
   return (
     <section>
@@ -61,16 +68,24 @@ export function InboxView({ now }: { now: Date }) {
         + Add a to-do
       </button>
 
+      {sorted.length > 0 && (
+        <SearchField value={query} onChange={setQuery} placeholder="Search to-dos…" />
+      )}
+
       {sorted.length === 0 ? (
         <Celebration
           icon="spark"
           title="Nothing waiting."
           sub="Add a to-do whenever something lands — no rush to schedule it."
         />
+      ) : results.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-paper-edge bg-paper-deep/30 px-4 py-8 text-center text-sm text-muted">
+          No to-dos match “{query.trim()}”.
+        </p>
       ) : (
         <div className="space-y-2.5">
           <AnimatePresence initial={false}>
-            {sorted.map((t) => (
+            {results.map((t) => (
               <TodoRow key={t.id} task={t} onSchedule={() => openReschedule(t.id)} />
             ))}
           </AnimatePresence>
