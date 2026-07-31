@@ -16,14 +16,7 @@ import {
   type EdgeSide,
 } from "../lib/effectiveWindow";
 import type { Task } from "../lib/types";
-import {
-  dayLabel,
-  durationLabel,
-  format,
-  isSameDay,
-  startOfDay,
-  timeLabel,
-} from "../lib/dates";
+import { dayLabel, durationLabel, format, isSameDay, startOfDay } from "../lib/dates";
 import { buildDayShape, groupDay } from "../lib/dayShape";
 import { computeDayBattery } from "../lib/battery";
 import { DayIntensity } from "../components/DayIntensity";
@@ -124,14 +117,6 @@ export function TodayView({ now }: { now: Date }) {
     !gapSuggestion.hasCandidates;
   const allClear = dayDone && inboxTodos.length === 0 && looseEnds.length === 0;
 
-  const countLabel = useMemo(() => {
-    if (items.length === 0) return null;
-    if (!isToday) return `${items.length} thing${items.length === 1 ? "" : "s"}`;
-    if (groups.toGoCount === 0) return "all done";
-    const done = groups.doneCount > 0 ? `${groups.doneCount} done · ` : "";
-    return `${done}${groups.toGoCount} to go`;
-  }, [items.length, isToday, groups]);
-
   return (
     <section>
       <header className="mb-5 flex items-start justify-between gap-3">
@@ -141,14 +126,6 @@ export function TodayView({ now }: { now: Date }) {
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          {isToday && (
-            <p className="text-sm font-semibold text-accent">{timeLabel(now)}</p>
-          )}
-          {countLabel && (
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-soft">
-              {countLabel}
-            </p>
-          )}
           <DayIntensity intensity={intensity} />
         </div>
       </header>
