@@ -26,7 +26,7 @@ import {
 } from "../lib/dates";
 import { buildDayShape, groupDay } from "../lib/dayShape";
 import { computeDayBattery } from "../lib/battery";
-import { DayBattery } from "../components/DayBattery";
+import { DayIntensity } from "../components/DayIntensity";
 import { DayFeed } from "../components/DayFeed";
 import { GapSuggestionCard } from "../components/GapSuggestionCard";
 import { DoneToday } from "../components/DoneToday";
@@ -61,9 +61,9 @@ export function TodayView({ now }: { now: Date }) {
   );
   const groups = useMemo(() => groupDay(items, now), [items, now]);
 
-  // The Day Battery — how heavy the day as built is (duration × energy over
+  // The day's intensity — how heavy the day as built is (duration × energy over
   // the window's capacity). A mirror only; capacity follows the day's window.
-  const battery = useMemo(
+  const intensity = useMemo(
     () => computeDayBattery(items, dayWindow, day, settings.defaultDurationMinutes),
     [items, dayWindow, day, settings.defaultDurationMinutes],
   );
@@ -80,7 +80,7 @@ export function TodayView({ now }: { now: Date }) {
   const gapSuggestion = useGapSuggestion(now, items, day, groups.spotlight?.id, {
     lane: isToday ? lane : null,
     window: dayWindow,
-    dayLoadPercent: battery.percent ?? undefined,
+    dayLoadPercent: intensity.percent ?? undefined,
   });
 
   // "Start earlier / end later?" — offered after a task lands outside the
@@ -149,6 +149,7 @@ export function TodayView({ now }: { now: Date }) {
               {countLabel}
             </p>
           )}
+          <DayIntensity intensity={intensity} />
         </div>
       </header>
 
@@ -165,8 +166,6 @@ export function TodayView({ now }: { now: Date }) {
         isToday={isToday}
         onOutsideCommit={isToday ? handleOutsideCommit : undefined}
       />
-
-      <DayBattery battery={battery} />
 
       {edgePrompt && (
         <DayEdgePrompt
