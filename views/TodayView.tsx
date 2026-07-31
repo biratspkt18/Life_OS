@@ -119,7 +119,7 @@ export function TodayView({ now }: { now: Date }) {
 
   return (
     <section>
-      <header className="mb-5 flex items-start justify-between gap-3">
+      <header className="mb-5 flex items-end justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-3xl font-bold tracking-tight text-ink">{dayLabel(day)}</h1>
           <p className="mt-1 text-sm text-muted">{format(day, "EEEE, d MMMM")}</p>
