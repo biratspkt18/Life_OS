@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, lt } from "drizzle-orm";
 import { db } from "./db";
 import { taskEvents, tasks } from "./db/schema";
 import { getSettings } from "./settings";
+import { taskToItem } from "./taskItem";
 import { buildDayShape } from "../dayShape";
 import { addDays, startOfDay } from "../dates";
 import {
   windowForDay,
   type Energy,
-  type Importance,
   type TaskEventType,
   type TodayItem,
 } from "../types";
@@ -61,23 +61,15 @@ export function freeMinutesForDay(userId: string, day: Date): number | null {
     const items: TodayItem[] = db
       .select()
       .from(tasks)
-      .where(eq(tasks.userId, userId))
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          gte(tasks.scheduledStart, dayStart.toISOString()),
+          lt(tasks.scheduledStart, dayEnd.toISOString()),
+        ),
+      )
       .all()
-      .filter((t) => {
-        if (!t.scheduledStart) return false;
-        const s = new Date(t.scheduledStart);
-        return s >= dayStart && s < dayEnd;
-      })
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        start: t.scheduledStart,
-        durationMinutes: t.durationMinutes,
-        importance: t.importance as Importance,
-        completed: t.completed,
-        allDay: false,
-        source: "lifeos" as const,
-      }));
+      .map(taskToItem);
     const settings = getSettings(userId);
     const shape = buildDayShape(
       items,

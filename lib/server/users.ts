@@ -22,6 +22,11 @@ type UserRow = typeof users.$inferSelect;
  *     filling in the `google_sub` so future logins match on step 1.
  *  3. otherwise, create a brand-new user.
  */
+/** The signed-in user's own row (for "who am I" / account display). */
+export function getUserById(id: string): UserRow | undefined {
+  return db.select().from(users).where(eq(users.id, id)).get();
+}
+
 export function findOrCreateUserFromGoogle(identity: GoogleIdentity): UserRow {
   const bySub = db.select().from(users).where(eq(users.googleSub, identity.sub)).get();
   if (bySub) return bySub;

@@ -1,15 +1,16 @@
 import type { DayWindow, TodayItem } from "./types";
-import { atTime, type Interval } from "./dates";
+import { atTime, startOfDay, type Interval } from "./dates";
 
-/** A timed block positioned within the day's working window, for the timeline. */
+/** A timed block positioned along the rendered bar, for the timeline. */
 export interface Block {
   item: TodayItem;
   start: Date;
   end: Date;
-  /** % offset from window start (0–100). */
-  topPct: number;
-  /** % of the window's height (clamped to stay within the strip). */
-  heightPct: number;
+  /** % offset from the bar's start (0–100). The bar is horizontal, so this is
+   *  a *left* offset. Bar = window unless extended. */
+  startPct: number;
+  /** % of the bar's length — the block's *width* (clamped to the strip). */
+  lengthPct: number;
 }
 
 /** One span of the capacity bar — either booked or free. */
@@ -24,6 +25,17 @@ export interface DayShape {
   windowStart: Date;
   windowEnd: Date;
   windowMinutes: number;
+  /**
+   * The rendered track's span. Equals the window unless `extendToNow`
+   * stretched it to include an outside-hours "now" (early morning / late
+   * evening). All block/pointer percentages are relative to the bar.
+   */
+  barStart: Date;
+  barEnd: Date;
+  barMinutes: number;
+  /** True when the bar reaches outside the working window on that side. */
+  extendedBefore: boolean;
+  extendedAfter: boolean;
   blocks: Block[];
   allDay: TodayItem[];
   bookedMinutes: number;
@@ -35,6 +47,17 @@ export interface DayShape {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+/** Local clock start-of-hour (constructor normalizes, so DST is handled). */
+function floorToHour(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 0, 0, 0);
+}
+
+/** Local clock end-of-hour: the next :00, or `d` itself if already on the hour. */
+function ceilToHour(d: Date): Date {
+  const onHour = d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + (onHour ? 0 : 1), 0, 0, 0);
 }
 
 /** Sort by start, then merge any overlapping/touching intervals. */
@@ -77,24 +100,55 @@ export function buildDayShape(
   day: Date,
   now: Date,
   fallbackDuration: number,
+  opts?: {
+    /**
+     * Stretch the rendered bar to include an outside-hours "now" (Today
+     * only): before the window it reaches back to the current hour; after it,
+     * forward past now — so the screen is never dead outside working hours
+     * and tasks can be hand-placed there.
+     */
+    extendToNow?: boolean;
+  },
 ): DayShape {
   const windowStart = atTime(day, window.dayWindowStart);
   const windowEnd = atTime(day, window.dayWindowEnd);
   const windowMinutes = Math.max(0, Math.round((windowEnd.getTime() - windowStart.getTime()) / 60000));
 
+  // The rendered bar: the window, stretched to cover an outside-hours "now".
+  // Hour edges are computed in *local clock* time (not epoch), so they land on
+  // the real :00 mark even in half-hour-offset zones (e.g. UTC+9:30).
+  const dayStart = startOfDay(day);
+  const dayEndCap = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+  let barStart = windowStart;
+  let barEnd = windowEnd;
+  if (opts?.extendToNow && windowMinutes > 0) {
+    if (now < windowStart) {
+      const flooredNow = floorToHour(now);
+      barStart = flooredNow > dayStart ? flooredNow : dayStart;
+    } else if (now > windowEnd) {
+      // At least an hour of droppable room after now, on a tidy hour edge.
+      const ceiled = ceilToHour(new Date(now.getTime() + 60 * 60_000));
+      barEnd = ceiled < dayEndCap ? ceiled : dayEndCap;
+    }
+  }
+  const barMinutes = Math.max(0, Math.round((barEnd.getTime() - barStart.getTime()) / 60000));
+  const extendedBefore = barStart < windowStart;
+  const extendedAfter = barEnd > windowEnd;
+
   const allDay = items.filter((i) => i.allDay);
 
-  // Timed items become positioned blocks; skip anything with no start.
+  // Timed items become positioned blocks (bar-relative); skip anything with
+  // no start. When the bar equals the window these numbers are unchanged.
   const timed = items.filter((i) => !i.allDay && i.start);
   const blocks: Block[] = timed.map((item) => {
     const start = new Date(item.start!);
     const dur = item.durationMinutes ?? fallbackDuration;
     const end = new Date(start.getTime() + dur * 60000);
-    const fromStart = (start.getTime() - windowStart.getTime()) / 60000;
-    const topPct = windowMinutes > 0 ? clamp((fromStart / windowMinutes) * 100, 0, 100) : 0;
-    const rawHeight = windowMinutes > 0 ? (dur / windowMinutes) * 100 : 0;
-    const heightPct = clamp(rawHeight, 0, 100 - topPct);
-    return { item, start, end, topPct, heightPct };
+    const fromStart = (start.getTime() - barStart.getTime()) / 60000;
+    const startPct = barMinutes > 0 ? clamp((fromStart / barMinutes) * 100, 0, 100) : 0;
+    const rawLength = barMinutes > 0 ? (dur / barMinutes) * 100 : 0;
+    const lengthPct = clamp(rawLength, 0, 100 - startPct);
+    return { item, start, end, startPct, lengthPct };
   });
 
   const busy = mergeIntervals(
@@ -129,6 +183,11 @@ export function buildDayShape(
     windowStart,
     windowEnd,
     windowMinutes,
+    barStart,
+    barEnd,
+    barMinutes,
+    extendedBefore,
+    extendedAfter,
     blocks,
     allDay,
     bookedMinutes,

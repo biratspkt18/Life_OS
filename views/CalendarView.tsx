@@ -2,7 +2,8 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useDayItems, useInboxTasks, useMonthItems, useSettings } from "../hooks/useDb";
-import { windowForDay } from "../lib/types";
+import { effectiveWindowForDay } from "../lib/effectiveWindow";
+import { useWindowException } from "../hooks/useWindowException";
 import type { Task, TodayItem } from "../lib/types";
 import {
   addMonths,
@@ -247,7 +248,11 @@ function DayDetail({ day, now, dueTodos }: { day: Date; now: Date; dueTodos: Tas
   const isViewingToday = isSameDay(day, now);
   const isPast = isBefore(day, startOfDay(now));
 
-  const dayWindow = useMemo(() => windowForDay(settings, day), [settings, day]);
+  const { exception } = useWindowException();
+  const dayWindow = useMemo(
+    () => effectiveWindowForDay(settings, day, exception),
+    [settings, day, exception],
+  );
   const shape = useMemo(
     () => buildDayShape(items, dayWindow, day, now, settings.defaultDurationMinutes),
     [items, dayWindow, day, now, settings.defaultDurationMinutes],

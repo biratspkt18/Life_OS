@@ -14,6 +14,7 @@ import {
   overlaps,
   startOfDay,
 } from "./dates";
+import { applyWindowException, dayKeyOf, type WindowException } from "./effectiveWindow";
 
 /**
  * The scheduling brain (brief §6).
@@ -53,6 +54,20 @@ export interface ProposalInput {
   now?: Date;
   /** Earliest day to consider placing on. Defaults to today. */
   earliestDay?: Date;
+  /**
+   * A one-day window change ("started early today"). Applied only to the
+   * calendar day it names — never to the same weekday later in the horizon.
+   */
+  windowException?: WindowException | null;
+}
+
+/** The window a given day runs on, with any one-day exception applied. */
+function windowOn(
+  settings: Settings,
+  day: Date,
+  exception: WindowException | null | undefined,
+) {
+  return applyWindowException(windowForDay(settings, day), exception ?? null, dayKeyOf(day));
 }
 
 /** A scheduled task as a busy interval (done or not — it still holds the time). */
@@ -136,8 +151,9 @@ function earliestNonPrimeFit(
   settings: Settings,
   busy: Interval[],
   now: Date,
+  exception: WindowException | null | undefined,
 ): Date | null {
-  const w = windowForDay(settings, day);
+  const w = windowOn(settings, day, exception);
   if (!w.enabled) return null;
   const windowStart = atTime(day, w.dayWindowStart);
   const windowEnd = atTime(day, w.dayWindowEnd);
@@ -179,7 +195,7 @@ export function proposeSlot(input: ProposalInput): SlotProposal | null {
 
   for (let i = 0; i < SEARCH_HORIZON_DAYS; i++) {
     const day = addDays(startDay, i);
-    const w = windowForDay(settings, day);
+    const w = windowOn(settings, day, input.windowException);
     if (!w.enabled) continue; // day off — schedule nothing here
     const windowStart = atTime(day, w.dayWindowStart);
     const windowEnd = atTime(day, w.dayWindowEnd);
@@ -198,7 +214,7 @@ export function proposeSlot(input: ProposalInput): SlotProposal | null {
 
       // 2) Prime is full. Try to make room by bumping the lowest-importance
       //    task occupying prime that is strictly lower importance than this.
-      const bump = tryBump(day, durationMinutes, importance, settings, tasks, externalBusy, excludeTaskId, now);
+      const bump = tryBump(day, durationMinutes, importance, settings, tasks, externalBusy, excludeTaskId, now, input.windowException);
       if (bump) return bump;
 
       // 3) No room and no bump → try next day's prime (loop continues).
@@ -249,8 +265,9 @@ function tryBump(
   externalBusy: Interval[],
   excludeTaskId: string | undefined,
   now: Date,
+  exception: WindowException | null | undefined,
 ): SlotProposal | null {
-  const w = windowForDay(settings, day);
+  const w = windowOn(settings, day, exception);
   const prime: Interval = {
     start: atTime(day, w.primeStart),
     end: atTime(day, w.primeEnd),
@@ -289,7 +306,7 @@ function tryBump(
     for (let j = 0; j < SEARCH_HORIZON_DAYS && !relocate; j++) {
       const d = addDays(startOfDay(now), j);
       const busyD = busyOnDay(d, tasksMinusOccupant, externalBusy, excludeTaskId);
-      relocate = earliestNonPrimeFit(d, occupant.durationMinutes, settings, busyD, now);
+      relocate = earliestNonPrimeFit(d, occupant.durationMinutes, settings, busyD, now, exception);
     }
     if (!relocate) continue;
 

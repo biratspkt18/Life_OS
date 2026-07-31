@@ -2,32 +2,21 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import cron from "node-cron";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, lte } from "drizzle-orm";
 import { db } from "../lib/server/db";
 import { tasks, users } from "../lib/server/db/schema";
 import { sendToUser } from "../lib/server/push";
-import { isSameDay, timeLabel } from "../lib/dates";
+import { config, logConfigSummary } from "../lib/server/config";
+import { addDays, startOfDay, timeLabel } from "../lib/dates";
 
-/** Parse an integer env var, falling back (with a warning) on garbage. */
-function intEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < min || n > max) {
-    console.warn(`[scheduler] ${name}="${raw}" is not a number in ${min}–${max}; using ${fallback}`);
-    return fallback;
-  }
-  return n;
-}
-
-const LEAD_MINUTES = intEnv("PING_LEAD_MINUTES", 5, 1, 120);
-const SUMMARY_HOUR = intEnv("MORNING_SUMMARY_HOUR", 7, 0, 23);
+const LEAD_MINUTES = config.worker.pingLeadMinutes;
+const SUMMARY_HOUR = config.worker.summaryHour;
 /** How far past a start time a missed ping may still fire (laptop was asleep). */
 const GRACE_MINUTES = 15;
 
 /** Marker file so the morning summary survives worker restarts without re-firing. */
 const SUMMARY_MARKER = path.join(
-  path.dirname(path.resolve(process.env.DB_PATH ?? "data/lifeos.db")),
+  path.dirname(path.resolve(config.dbPath)),
   ".last-summary",
 );
 const localDayKey = (d: Date) =>
@@ -45,16 +34,24 @@ const readMarker = (): SummaryMarker => {
 };
 const writeMarker = (m: SummaryMarker) => fs.writeFileSync(SUMMARY_MARKER, JSON.stringify(m));
 
-/** One user's remaining scheduled tasks for today, soonest first. */
+/** One user's remaining scheduled tasks for today, soonest first. The
+ *  [dayStart, dayEnd) bound is pushed into SQL so it rides the
+ *  (user_id, scheduled_start) index instead of scanning the user's whole table. */
 function remainingToday(userId: string, now: Date) {
+  const dayStart = startOfDay(now).toISOString();
+  const dayEnd = addDays(startOfDay(now), 1).toISOString();
   return db
     .select()
     .from(tasks)
-    .where(eq(tasks.userId, userId))
-    .all()
-    .filter(
-      (t) => !t.completed && t.scheduledStart && isSameDay(new Date(t.scheduledStart), now),
+    .where(
+      and(
+        eq(tasks.userId, userId),
+        eq(tasks.completed, false),
+        gte(tasks.scheduledStart, dayStart),
+        lt(tasks.scheduledStart, dayEnd),
+      ),
     )
+    .all()
     .sort(
       (a, b) => new Date(a.scheduledStart!).getTime() - new Date(b.scheduledStart!).getTime(),
     );
@@ -96,29 +93,43 @@ cron.schedule("* * * * *", async () => {
   try {
     const now = new Date();
 
-    // Per-task pings — each ping goes to that task's owner only.
-    const horizon = new Date(now.getTime() + LEAD_MINUTES * 60_000);
-    for (const t of db.select().from(tasks).all()) {
-      if (t.completed || !t.scheduledStart || t.pingedAt) continue;
-      const start = new Date(t.scheduledStart);
+    // Per-task pings — each ping goes to that task's owner only. Only the
+    // handful of tasks actually due soon are pulled (not every user's whole
+    // table): incomplete, not yet pinged, starting within the
+    // [now - grace, now + lead] window. The filtering happens in SQL, so the
+    // per-minute tick never deserializes the whole tasks table into Node.
+    const horizon = new Date(now.getTime() + LEAD_MINUTES * 60_000).toISOString();
+    const earliest = new Date(now.getTime() - GRACE_MINUTES * 60_000).toISOString();
+    const due = db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.completed, false),
+          isNull(tasks.pingedAt),
+          gte(tasks.scheduledStart, earliest),
+          lte(tasks.scheduledStart, horizon),
+        ),
+      )
+      .all();
+    for (const t of due) {
+      const start = new Date(t.scheduledStart!);
       const lateMs = now.getTime() - start.getTime();
-      if (start <= horizon && lateMs <= GRACE_MINUTES * 60_000) {
-        try {
-          await sendToUser(t.userId, {
-            title: t.title,
-            body:
-              lateMs > 0
-                ? `Was set for ${timeLabel(start)} — still doable?`
-                : `Starts at ${timeLabel(start)}`,
-            url: "/",
-          });
-          db.update(tasks)
-            .set({ pingedAt: new Date().toISOString() })
-            .where(eq(tasks.id, t.id))
-            .run();
-        } catch (err) {
-          console.error("[scheduler] ping failed:", err);
-        }
+      try {
+        await sendToUser(t.userId, {
+          title: t.title,
+          body:
+            lateMs > 0
+              ? `Was set for ${timeLabel(start)} — still doable?`
+              : `Starts at ${timeLabel(start)}`,
+          url: "/",
+        });
+        db.update(tasks)
+          .set({ pingedAt: new Date().toISOString() })
+          .where(eq(tasks.id, t.id))
+          .run();
+      } catch (err) {
+        console.error("[scheduler] ping failed:", err);
       }
     }
 
@@ -140,6 +151,7 @@ cron.schedule("* * * * *", async () => {
   }
 });
 
+logConfigSummary();
 console.log(
   `[scheduler] running · ping lead ${LEAD_MINUTES}m (+${GRACE_MINUTES}m grace) · summary ${SUMMARY_HOUR}:00 w/ catch-up`,
 );

@@ -1,16 +1,8 @@
 import { findTagMatch, normalizeTag } from "../lib/tags";
 
-let pass = 0;
-let fail = 0;
-function check(name: string, cond: boolean, extra = "") {
-  if (cond) {
-    pass++;
-    console.log(`  ok  - ${name}`);
-  } else {
-    fail++;
-    console.log(`  FAIL- ${name} ${extra}`);
-  }
-}
+import { harness } from "./_harness.mts";
+
+const { check, done } = harness("tags");
 
 {
   // normalizeTag
@@ -36,5 +28,4 @@ function check(name: string, cond: boolean, extra = "") {
   check("empty candidate → null", findTagMatch(existing, "") === null);
 }
 
-console.log(`\ntags: ${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+done();

@@ -1,35 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, isNotNull, lt, lte } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { eventExists, listEvents, type CalendarEvent } from "./calendar";
-import type { Importance, TodayItem } from "../types";
+import { byStart, googleEventToItem, taskToItem } from "./taskItem";
+import type { TodayItem } from "../types";
 
 type Row = typeof tasks.$inferSelect;
-
-function diffMinutes(startISO: string | null, endISO: string | null): number | null {
-  if (!startISO || !endISO) return null;
-  const ms = new Date(endISO).getTime() - new Date(startISO).getTime();
-  return ms > 0 ? Math.round(ms / 60000) : null;
-}
-
-function taskToItem(t: Row): TodayItem {
-  return {
-    id: t.id,
-    title: t.title,
-    start: t.scheduledStart,
-    durationMinutes: t.durationMinutes,
-    importance: t.importance as Importance,
-    completed: t.completed,
-    allDay: false,
-    source: "lifeos",
-  };
-}
-
-function byStart(a: TodayItem, b: TodayItem): number {
-  const as = a.start ? new Date(a.start).getTime() : 0;
-  const bs = b.start ? new Date(b.start).getTime() : 0;
-  return as - bs;
-}
 
 /**
  * The merged Today list: Life OS tasks scheduled for the day **plus** events
@@ -50,17 +26,20 @@ export async function getTodayItems(
   const dayStart = new Date(dayStartISO);
   const dayEnd = new Date(dayEndISO);
 
+  // The day's tasks, bounded in SQL (ISO strings sort chronologically) so the
+  // (user_id, scheduled_start) index is used instead of scanning the table.
   const tasksInDay = (): Row[] =>
     db
       .select()
       .from(tasks)
-      .where(eq(tasks.userId, userId))
-      .all()
-      .filter((t) => {
-        if (!t.scheduledStart) return false;
-        const s = new Date(t.scheduledStart);
-        return s >= dayStart && s < dayEnd;
-      });
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          gte(tasks.scheduledStart, dayStartISO),
+          lt(tasks.scheduledStart, dayEndISO),
+        ),
+      )
+      .all();
 
   // Reconcile a little before today through ~5 weeks out, so deleting a
   // near-future event in Google also clears it here (the app only shows Today,
@@ -91,13 +70,24 @@ export async function getTodayItems(
   // events.get, and anything uncertain is kept. Completed tasks are never
   // reconcile-deleted: tidying an old event out of Google must not erase the
   // record that the task happened.
-  for (const t of db.select().from(tasks).where(eq(tasks.userId, userId)).all()) {
-    if (!t.googleEventId || !t.scheduledStart) continue;
-    if (t.completed) continue;
-    const s = new Date(t.scheduledStart);
-    if (s < recStart || s > recEnd) continue;
-    if (existingIds.has(t.googleEventId)) continue;
-    if ((await eventExists(userId, t.googleEventId)) === false) {
+  // Only incomplete, calendar-linked tasks inside the reconcile window are
+  // suspects — scoped in SQL so we don't walk the user's whole table.
+  const suspects = db
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.userId, userId),
+        eq(tasks.completed, false),
+        isNotNull(tasks.googleEventId),
+        gte(tasks.scheduledStart, recStart.toISOString()),
+        lte(tasks.scheduledStart, recEnd.toISOString()),
+      ),
+    )
+    .all();
+  for (const t of suspects) {
+    if (existingIds.has(t.googleEventId!)) continue;
+    if ((await eventExists(userId, t.googleEventId!)) === false) {
       db.delete(tasks).where(and(eq(tasks.id, t.id), eq(tasks.userId, userId))).run();
     }
   }
@@ -111,16 +101,7 @@ export async function getTodayItems(
       const s = new Date(e.start!);
       return s >= dayStart && s < dayEnd;
     })
-    .map((e) => ({
-      id: `g:${e.id}`,
-      title: e.title,
-      start: e.start,
-      durationMinutes: diffMinutes(e.start, e.end),
-      importance: null,
-      completed: false,
-      allDay: e.allDay,
-      source: "google" as const,
-    }));
+    .map(googleEventToItem);
 
   return [...appItems, ...externalItems].sort(byStart);
 }

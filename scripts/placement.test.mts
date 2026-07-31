@@ -9,17 +9,9 @@ import {
   type Span,
 } from "../lib/placement";
 
-let pass = 0;
-let fail = 0;
-function check(name: string, cond: boolean, extra = "") {
-  if (cond) {
-    pass++;
-    console.log(`  ok  - ${name}`);
-  } else {
-    fail++;
-    console.log(`  FAIL- ${name} ${extra}`);
-  }
-}
+import { harness } from "./_harness.mts";
+
+const { check, done } = harness("placement");
 
 const span = (id: string, startMin: number, endMin: number): Span => ({ id, startMin, endMin });
 const WIN = 720; // a 12-hour window, e.g. 08:00-20:00
@@ -151,5 +143,4 @@ const WIN = 720; // a 12-hour window, e.g. 08:00-20:00
   check("major cadence every 3rd hour", marks.filter((m) => m.major).length === 5);
 }
 
-console.log(`\nplacement: ${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+done();

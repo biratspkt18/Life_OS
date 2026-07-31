@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { db } from "../lib/server/db";
-import { tasks } from "../lib/server/db/schema";
+import { tasks, users } from "../lib/server/db/schema";
 import type { Importance } from "../lib/types";
 
 interface Sample {
@@ -42,9 +42,18 @@ function startToday(hhmm: string): Date {
 }
 
 function main() {
+  // Tasks are per-user since the multi-user refactor; seed against the first
+  // (usually only) local account.
+  const user = db.select({ id: users.id, email: users.email }).from(users).get();
+  if (!user) {
+    console.error("No users yet — sign in once before seeding.");
+    process.exit(1);
+  }
+
   const stamp = new Date().toISOString();
   const rows = SAMPLES.map((s) => ({
     id: randomUUID(),
+    userId: user.id,
     title: s.title,
     durationMinutes: s.durationMinutes,
     importance: s.importance,

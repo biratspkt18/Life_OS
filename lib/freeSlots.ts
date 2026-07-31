@@ -1,6 +1,7 @@
 import type { Settings, Task } from "./types";
 import { windowForDay } from "./types";
 import { addDays, addMinutes, atTime, startOfDay } from "./dates";
+import { applyWindowException, dayKeyOf, type WindowException } from "./effectiveWindow";
 
 interface Interval {
   start: Date;
@@ -32,6 +33,8 @@ export function findFreeSlots(opts: {
   stepMinutes?: number;
   maxPerDay?: number;
   limit?: number;
+  /** Today's one-day window change, applied only to the day it names. */
+  windowException?: WindowException | null;
 }): Date[] {
   const { durationMinutes, settings, tasks, now } = opts;
   const externalBusy = opts.externalBusy ?? [];
@@ -45,7 +48,11 @@ export function findFreeSlots(opts: {
 
   for (let d = 0; d < days && out.length < limit; d++) {
     const day = addDays(fromDay, d);
-    const win = windowForDay(settings, day);
+    const win = applyWindowException(
+      windowForDay(settings, day),
+      opts.windowException ?? null,
+      dayKeyOf(day),
+    );
     if (!win.enabled) continue;
 
     const winStart = atTime(day, win.dayWindowStart);

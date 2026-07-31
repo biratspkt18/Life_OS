@@ -114,12 +114,13 @@ reads/writes via `/api/*`.
 
 ### Data model
 
-Four small tables (`lib/server/db/schema.ts`):
+Six small tables (`lib/server/db/schema.ts`):
 
 | Table | What it holds |
 |---|---|
-| `tasks` | Every task/to-do: `title`, `durationMinutes`, `importance` (high/normal/low), `scheduledStart` (null = an unscheduled to-do), `dueDate` + `preferredDate` (to-do dates), `googleEventId` (link to its calendar event), `completed`/`completedAt`, and `pingedAt` (so a start-time reminder fires once). |
+| `tasks` | Every task/to-do: `title`, `durationMinutes`, `importance` (high/normal/low), `scheduledStart` (null = an unscheduled to-do), `dueDate` + `preferredDate` (to-do dates), `googleEventId` (link to its calendar event), `completed`/`completedAt`, `tag`, `energy`, `deferralCount`, and `pingedAt` (so a start-time reminder fires once). Indexed on `(userId, scheduledStart)` and `googleEventId`. |
 | `users` | One row per person: `googleSub` (Google's stable per-user id), `email`, `name`. Created automatically on first sign-in. |
+| `taskEvents` | Append-only behavioural log — one row per task lifecycle moment (created/scheduled/completed/deferred/…), with `tag`/`energy` snapshotted at the time. `taskId` is deliberately not a foreign key so history survives task deletion. Powers Stats and the deferral logic. |
 | `settings` | One JSON blob per user: the seven per-weekday windows, the legacy/template window, default task length, and the `pushEnabled` / `googleConnected` flags. |
 | `googleAccount` | One row per user — the Google **refresh token** (silent reconnect), the cached access token + expiry, and the connected `email` / `calendarId`. |
 | `pushSubscriptions` | One row per subscribed browser, owned by a user (`endpoint` + encryption keys); dead ones are pruned automatically when a push bounces. |
@@ -288,9 +289,11 @@ npm run dev          # Next (http://localhost:3000) + the cron worker
 npm run build        # production build
 npm start            # next start + worker
 npm run worker       # run only the reminder worker
-npm run db:push      # apply the Drizzle schema to the SQLite file
+npm run db:push      # LOCAL DEV ONLY: push schema straight to SQLite
+npm run db:generate  # write a versioned migration after a schema change
+npm run db:migrate   # apply migrations (fresh deploy / prod) — see drizzle/README.md
 npm run typecheck    # tsc --noEmit
-npm test             # scheduling-brain test suite
+npm test             # auto-discovers every scripts/*.test.mts
 npm run clear-tasks        # wipe every task (see below)
 npm run seed-loose-ends    # add past, unchecked tasks for testing (see below)
 npm run seed-missed-dates  # add to-dos with slipped due/preferred dates (see below)
@@ -470,23 +473,29 @@ Also SQLite-only (no calendar events). Clear with `npm run clear-tasks`.
 app/             layout · page (Shell) · login · api/* route handlers
                  (api: tasks · today · range · settings · auth · google · push)
 components/       Shell (error-boundary per screen) · Capture (add/edit sheet) ·
-                 Spotlight · TaskRow · Checkbox · DayFeed · DoneToday ·
-                 Timeline (overview/) · RescheduleModal (free-slot picker) ·
-                 SlotPicker (its slot grid) · RescheduleLoop · NewDateModal
-                 (one-tap re-date) · LooseEndSuggestion · FreeSlotChips ·
-                 ActionMenu (⋯ menu) · ConnectPanel · ConnectPrompt ·
-                 ErrorBoundary · pickers (duration wheel, day) · icons ·
+                 DayFeed · DoneToday · Timeline (overview/) · DayPlacer
+                 (drag-to-place bar) · DayBattery (day-load mirror) ·
+                 EnergyLaneToggle (slow/zippy) · GapSuggestionCard
+                 ("got a little room?") · RescheduleModal (free-slot picker) ·
+                 NewDateModal (one-tap re-date) · DayEdgePrompt (start earlier /
+                 end later) · BreakdownModal · ActionMenu (⋯ menu) ·
+                 ConnectPanel · AccountPanel (log out / switch) · Checkbox ·
+                 Celebration · ErrorBoundary · SearchField · pickers · icons ·
                  ui/button (themed shadcn primitive)
 views/            TodayView · CalendarView · InboxView (To-do) ·
-                 LooseEndsView · SettingsView
-hooks/            useNow · useDb (SWR-backed) · useSuggestions
-                 ("got a little room?") · useCheckOff (satisfying complete)
+                 LooseEndsView · StatsView · SettingsView
+hooks/            useNow · useDb (SWR-backed) · useGapSuggestion
+                 ("got a little room?") · useCheckOff · useTheme ·
+                 useEnergyLane · useWindowException
 lib/
-  types · dates · dayShape · freeSlots · schedule (the brain) · utils (cn)  (pure; shared)
+  types · dates · dayShape · freeSlots · schedule (the brain) · placement ·
+  gapSuggest · battery · energyLane · effectiveWindow · theme · stats ·
+  tags · deferral · breakdown · utils (cn)   (pure; shared)
   tasks (client API, optimistic) · client/push
   server/
-    db/{schema,index} · auth · settings · tasks · conflicts · validate
-    (runtime write guard) · google · calendar · today · range · push
+    db/{schema,index} · auth · session · users · settings · tasks · conflicts ·
+    validate (runtime write guard) · taskItem (row→item mapper) · google ·
+    calendar · today · range · push · events
 components.json                 shadcn config (themed to the Cue palette)
 worker/scheduler.ts             cron: per-task ping + morning summary
 scripts/          brain.test.mts · clear-tasks.mts · seed-loose-ends.mts ·

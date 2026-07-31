@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { config } from "@/lib/server/config";
 import { exchangeCodeForIdentity, saveGoogleTokensForUser } from "@/lib/server/google";
 import { findOrCreateUserFromGoogle } from "@/lib/server/users";
 import { createSessionToken, SESSION_COOKIE } from "@/lib/server/auth";
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   // Behind a reverse proxy the request's own protocol can be http (Caddy→app is
   // plain HTTP on localhost), so prefer an explicit APP_ORIGIN in production and
   // fall back to the request origin for local dev.
-  const appOrigin = process.env.APP_ORIGIN ?? url.origin;
+  const appOrigin = config.appOrigin || url.origin;
 
   // On failure, bounce back to /login (not home) — an unauthenticated user who
   // declined consent would otherwise be redirected right back here by middleware.

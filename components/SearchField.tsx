@@ -10,13 +10,16 @@ export function SearchField({
   value,
   onChange,
   placeholder = "Search…",
+  className = "mb-4",
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  /** Layout overrides (margins / flex sizing) when composed into a row. */
+  className?: string;
 }) {
   return (
-    <div className="relative mb-4">
+    <div className={`relative ${className}`}>
       <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-soft" />
       <input
         type="search"

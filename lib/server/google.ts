@@ -2,6 +2,7 @@ import { google } from "googleapis";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { googleAccount } from "./db/schema";
+import { config } from "./config";
 import type { GoogleIdentity } from "./users";
 
 // `openid`+`email`+`profile` identify the person (login); `calendar.events` lets
@@ -15,17 +16,22 @@ const SCOPES = [
 
 export function oauthClient() {
   return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI,
+    config.google.clientId,
+    config.google.clientSecret,
+    config.google.redirectUri,
   );
 }
 
-/** Consent URL — offline + prompt=consent so Google returns a refresh token. */
+/**
+ * Consent URL. `select_account` forces Google's account chooser so a person
+ * can pick *which* Google account to sign in with (essential for switching
+ * accounts — otherwise Google silently reuses whichever one the browser is
+ * already signed into). `consent` + offline access guarantee a refresh token.
+ */
 export function authUrl(state: string): string {
   return oauthClient().generateAuthUrl({
     access_type: "offline",
-    prompt: "consent",
+    prompt: "select_account consent",
     scope: SCOPES,
     state,
   });
@@ -51,7 +57,7 @@ export async function exchangeCodeForIdentity(code: string): Promise<ExchangeRes
   if (!tokens.id_token) throw new Error("no id_token in token response");
   const ticket = await client.verifyIdToken({
     idToken: tokens.id_token,
-    audience: process.env.GOOGLE_CLIENT_ID,
+    audience: config.google.clientId,
   });
   const p = ticket.getPayload();
   if (!p?.sub) throw new Error("id_token has no sub");
@@ -106,8 +112,7 @@ export function googleStatus(userId: string): {
   const a = getAccount(userId);
   // `configured` = OAuth credentials exist in the env, so a connect attempt can
   // actually reach Google's consent screen (vs. failing inside the start route).
-  const configured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-  return { connected: !!a?.refreshToken, email: a?.email ?? null, configured };
+  return { connected: !!a?.refreshToken, email: a?.email ?? null, configured: config.google.configured };
 }
 
 export function disconnectGoogle(userId: string): void {

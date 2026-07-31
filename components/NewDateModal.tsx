@@ -1,12 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
-import { motion } from "motion/react";
+import { useState } from "react";
 import { updateTask } from "../lib/tasks";
 import { addDays, dayLabel, startOfDay } from "../lib/dates";
 import type { Task } from "../lib/types";
 import { DayCalendar } from "./pickers";
-import { CloseIcon } from "./icons";
 import { Button } from "./ui/button";
+import { Dialog } from "./ui/dialog";
 
 /**
  * Small overlay for giving a slipped to-do a fresh due / preferred date — the
@@ -35,14 +34,6 @@ export function NewDateModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   async function pick(day: Date) {
     if (saving) return;
     setSaving(true);
@@ -64,29 +55,7 @@ export function NewDateModal({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div
-        className="absolute inset-0 bg-ink/25 backdrop-blur-[2px] animate-fade-in"
-        onClick={onClose}
-      />
-      <motion.div
-        className="surface relative z-10 w-full max-w-sm rounded-b-none rounded-t-2xl p-5 sm:m-4 sm:rounded-2xl"
-        initial={{ y: 24, opacity: 0, scale: 0.98 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
-        transition={{ type: "spring", stiffness: 380, damping: 32 }}
-      >
-        <div className="mb-1 flex items-start justify-between">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">
-            {kind === "due" ? "New due date" : "New preferred date"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="-mr-1.5 -mt-1 rounded-lg p-1.5 text-muted-soft transition-colors hover:bg-paper-edge/60 hover:text-ink"
-            aria-label="Close"
-          >
-            <CloseIcon className="h-5 w-5" />
-          </button>
-        </div>
+    <Dialog title={kind === "due" ? "New due date" : "New preferred date"} onClose={onClose}>
         <p className="text-sm font-medium text-ink">{task.title}</p>
         <p className="mb-4 text-xs text-muted">
           {oldDay ? (
@@ -118,8 +87,7 @@ export function NewDateModal({
           <DayCalendar value={todayStart} min={todayStart} onSelect={pick} />
         </div>
 
-        {error && <p className="mt-3 text-xs font-medium text-accent">{error}</p>}
-      </motion.div>
-    </div>
+      {error && <p className="mt-3 text-xs font-medium text-accent">{error}</p>}
+    </Dialog>
   );
 }

@@ -3,7 +3,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useDayItems, useSettings } from "../hooks/useDb";
 import { buildDayShape, type Block, type DayShape } from "../lib/dayShape";
-import { windowForDay } from "../lib/types";
+import { effectiveWindowForDay } from "../lib/effectiveWindow";
+import { useWindowException } from "../hooks/useWindowException";
 import { addMinutes, atTime, format, minutesBetween, startOfDay, timeLabel } from "../lib/dates";
 import {
   STEP_MIN,
@@ -93,8 +94,9 @@ export function useFirstFit(
 ): Date | null {
   const settings = useSettings();
   const items = useDayItems(day);
+  const { exception } = useWindowException();
   return useMemo(() => {
-    const win = windowForDay(settings, day);
+    const win = effectiveWindowForDay(settings, day, exception);
     if (!win.enabled) return null;
     const shape = buildDayShape(
       items.filter((i) => i.id !== excludeId),
@@ -112,7 +114,7 @@ export function useFirstFit(
       preferredMin: preferred ? minutesBetween(shape.windowStart, preferred) : undefined,
     });
     return min == null ? null : addMinutes(shape.windowStart, min);
-  }, [settings, items, day, now, durationMinutes, excludeId, preferred]);
+  }, [settings, items, day, now, durationMinutes, excludeId, preferred, exception]);
 }
 
 /** Live drag state for the ghost block. */
@@ -173,7 +175,8 @@ export function DayPlacer({
   const items = useDayItems(day);
   const reduceMotion = useReducedMotion();
 
-  const win = windowForDay(settings, day);
+  const { exception } = useWindowException();
+  const win = effectiveWindowForDay(settings, day, exception);
   const shape = useMemo(
     () =>
       buildDayShape(
@@ -504,7 +507,7 @@ export function DayPlacer({
                     : "",
                 colliding ? "bg-danger/70" : segClasses(b),
               ].join(" ")}
-              style={{ left: `${b.topPct}%`, width: `calc(${b.heightPct}% - 2px)`, minWidth: 4 }}
+              style={{ left: `${b.startPct}%`, width: `calc(${b.lengthPct}% - 2px)`, minWidth: 4 }}
               animate={{ y: lifted ? -LIFT_PX : 0 }}
               transition={reduceMotion ? { duration: 0 } : SETTLE}
             />

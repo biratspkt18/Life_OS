@@ -62,6 +62,9 @@ export function useDayItems(day: Date): TodayItem[] {
   const key = `/api/today?start=${start.toISOString()}&end=${end.toISOString()}`;
   const { data } = useSWR<TodayItem[]>(key, fetcher, {
     refreshInterval: 30_000,
+    // Focus/mount revalidations within the server's Google-events cache window
+    // reuse it instead of firing a fresh calendar fetch.
+    dedupingInterval: 15_000,
     revalidateOnFocus: true,
     fallbackData: [],
   });
@@ -84,6 +87,7 @@ export function useMonthItems(month: Date): {
   const key = `/api/range?start=${gridStart.toISOString()}&end=${gridEnd.toISOString()}`;
   const { data } = useSWR<TodayItem[]>(key, fetcher, {
     refreshInterval: 60_000,
+    dedupingInterval: 15_000,
     revalidateOnFocus: true,
     fallbackData: [],
   });
@@ -148,6 +152,7 @@ export function useExternalBusy(fromDay: Date, days = 30): Interval[] {
   const key = `/api/range?start=${start.toISOString()}&end=${end.toISOString()}`;
   const { data } = useSWR<TodayItem[]>(key, fetcher, {
     refreshInterval: 60_000,
+    dedupingInterval: 15_000,
     revalidateOnFocus: true,
     fallbackData: [],
   });

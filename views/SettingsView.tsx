@@ -8,6 +8,7 @@ import { parseHHmm } from "../lib/dates";
 import { defaultWeekdayWindows, type DayWindow, type Settings } from "../lib/types";
 import { type ThemePref } from "../lib/theme";
 import { ConnectPanel } from "../components/ConnectPanel";
+import { AccountPanel } from "../components/AccountPanel";
 
 /** Display order: Monday-first, mapped to JS getDay() indices. */
 const WEEK: { label: string; index: number }[] = [
@@ -224,6 +225,8 @@ function RootPage({
         </Group>
 
         <ConnectPanel />
+
+        <AccountPanel />
       </div>
     </>
   );

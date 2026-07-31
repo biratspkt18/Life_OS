@@ -104,6 +104,8 @@ export interface TodayItem {
   completed: boolean;
   allDay: boolean;
   source: "lifeos" | "google";
+  /** Task energy label; null for unlabeled tasks and Google events. */
+  energy: Energy | null;
 }
 
 /** The schedulable shape of a single day. */

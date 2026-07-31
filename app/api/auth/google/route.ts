@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { config } from "@/lib/server/config";
 import { authUrl } from "@/lib/server/google";
 
 export const runtime = "nodejs";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 // point, reachable while logged out. It sends the browser to Google's consent
 // screen; /api/google/callback finishes the login.
 export async function GET() {
-  if (!process.env.GOOGLE_CLIENT_ID) {
+  if (!config.google.configured) {
     return NextResponse.json(
       { error: "Google OAuth is not configured (see .env)" },
       { status: 500 },

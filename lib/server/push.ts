@@ -2,18 +2,13 @@ import webpush from "web-push";
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { pushSubscriptions } from "./db/schema";
+import { config } from "./config";
 
 let configured = false;
 function configure() {
   if (configured) return;
-  const pub = process.env.VAPID_PUBLIC_KEY;
-  const priv = process.env.VAPID_PRIVATE_KEY;
-  if (!pub || !priv) throw new Error("VAPID keys are not set");
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT ?? "mailto:you@example.com",
-    pub,
-    priv,
-  );
+  if (!config.vapid.configured) throw new Error("VAPID keys are not set");
+  webpush.setVapidDetails(config.vapid.subject, config.vapid.publicKey, config.vapid.privateKey);
   configured = true;
 }
 

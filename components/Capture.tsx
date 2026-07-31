@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useAllTasks, useDayItems, useSettings } from "../hooks/useDb";
 import { ConflictError, createTask, dropTask, updateTask } from "../lib/tasks";
-import { windowForDay, type Energy, type Importance, type TaskEventContext } from "../lib/types";
+import type { Energy, Importance, TaskEventContext } from "../lib/types";
+import { effectiveWindowForDay, getWindowException } from "../lib/effectiveWindow";
 import { addDays, atTime, dayLabel, durationLabel, format, startOfDay, timeLabel } from "../lib/dates";
 import { buildDayShape } from "../lib/dayShape";
 import { DayPickerButton, DurationPicker, EnergyPicker, ImportancePicker } from "./pickers";
@@ -198,7 +199,7 @@ export function Capture({ now }: { now: Date }) {
           chosenVia: pickedTime ? "drag" : "first_fit",
           freeMinutesDay: buildDayShape(
             dayItems,
-            windowForDay(settings, day),
+            effectiveWindowForDay(settings, day, getWindowException()),
             day,
             now,
             settings.defaultDurationMinutes,

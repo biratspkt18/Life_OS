@@ -1,16 +1,8 @@
 import { computeDeferralDelta, type DeferralSnapshot } from "../lib/deferral";
 
-let pass = 0;
-let fail = 0;
-function check(name: string, cond: boolean, extra = "") {
-  if (cond) {
-    pass++;
-    console.log(`  ok  - ${name}`);
-  } else {
-    fail++;
-    console.log(`  FAIL- ${name} ${extra}`);
-  }
-}
+import { harness } from "./_harness.mts";
+
+const { check, done } = harness("deferral");
 
 function snap(p: Partial<DeferralSnapshot> = {}): DeferralSnapshot {
   return {
@@ -123,5 +115,4 @@ const tueEarly = new Date(2026, 5, 23, 0, 1).toISOString();
   );
 }
 
-console.log(`\ndeferral: ${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+done();

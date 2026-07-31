@@ -5,17 +5,9 @@ import { DEFAULT_SETTINGS, type Task } from "../lib/types";
 const now = new Date(2026, 5, 22, 8, 0, 0);
 const settings = { ...DEFAULT_SETTINGS }; // window 08-20, prime 09-12
 
-let pass = 0;
-let fail = 0;
-function check(name: string, cond: boolean, extra = "") {
-  if (cond) {
-    pass++;
-    console.log(`  ok  - ${name}`);
-  } else {
-    fail++;
-    console.log(`  FAIL- ${name} ${extra}`);
-  }
-}
+import { harness } from "./_harness.mts";
+
+const { check, done } = harness("brain");
 
 function mkTask(p: Partial<Task>): Task {
   return {
@@ -109,5 +101,4 @@ function hhmm(d: Date) {
   check("respects now → no slot before 10:30", !!p && p.start >= lateNow, p ? hhmm(p.start) : "null");
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+done();

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { listEvents } from "./calendar";
@@ -36,7 +36,19 @@ export async function findConflict(
 
   // 1) Local Life OS tasks — this user's only. A *completed* task still holds
   //    its slot — you already spent that time, so nothing new may overlap it.
-  for (const t of db.select().from(tasks).where(eq(tasks.userId, userId)).all()) {
+  //    A task starting at/after our end can't overlap, so bound the scan there
+  //    in SQL (the (user_id, scheduled_start) index handles it); the precise
+  //    overlap test — including the unbounded lower edge — stays in JS so no
+  //    long task starting earlier is ever missed.
+  const endISO = new Date(end).toISOString();
+  const candidates = db
+    .select()
+    .from(tasks)
+    .where(
+      and(eq(tasks.userId, userId), isNotNull(tasks.scheduledStart), lt(tasks.scheduledStart, endISO)),
+    )
+    .all();
+  for (const t of candidates) {
     if (t.id === excludeTaskId || !t.scheduledStart) continue;
     const s = new Date(t.scheduledStart).getTime();
     const e = s + t.durationMinutes * 60_000;

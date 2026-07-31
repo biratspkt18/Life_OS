@@ -1,35 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte, lt } from "drizzle-orm";
 import { db } from "./db";
 import { tasks } from "./db/schema";
 import { listEvents, type CalendarEvent } from "./calendar";
-import type { Importance, TodayItem } from "../types";
-
-type Row = typeof tasks.$inferSelect;
-
-function diffMinutes(startISO: string | null, endISO: string | null): number | null {
-  if (!startISO || !endISO) return null;
-  const ms = new Date(endISO).getTime() - new Date(startISO).getTime();
-  return ms > 0 ? Math.round(ms / 60000) : null;
-}
-
-function taskToItem(t: Row): TodayItem {
-  return {
-    id: t.id,
-    title: t.title,
-    start: t.scheduledStart,
-    durationMinutes: t.durationMinutes,
-    importance: t.importance as Importance,
-    completed: t.completed,
-    allDay: false,
-    source: "lifeos",
-  };
-}
-
-function byStart(a: TodayItem, b: TodayItem): number {
-  const as = a.start ? new Date(a.start).getTime() : 0;
-  const bs = b.start ? new Date(b.start).getTime() : 0;
-  return as - bs;
-}
+import { byStart, googleEventToItem, taskToItem } from "./taskItem";
+import type { TodayItem } from "../types";
 
 /**
  * Merged items across an arbitrary date range — Life OS tasks scheduled in the
@@ -46,16 +20,19 @@ export async function getRangeItems(
   const rangeStart = new Date(rangeStartISO);
   const rangeEnd = new Date(rangeEndISO);
 
+  // Bounded in SQL (ISO strings sort chronologically) so the
+  // (user_id, scheduled_start) index serves the month grid.
   const appItems = db
     .select()
     .from(tasks)
-    .where(eq(tasks.userId, userId))
+    .where(
+      and(
+        eq(tasks.userId, userId),
+        gte(tasks.scheduledStart, rangeStartISO),
+        lt(tasks.scheduledStart, rangeEndISO),
+      ),
+    )
     .all()
-    .filter((t) => {
-      if (!t.scheduledStart) return false;
-      const s = new Date(t.scheduledStart);
-      return s >= rangeStart && s < rangeEnd;
-    })
     .map(taskToItem);
 
   let events: CalendarEvent[] | null;
@@ -73,16 +50,7 @@ export async function getRangeItems(
       const s = new Date(e.start!);
       return s >= rangeStart && s < rangeEnd;
     })
-    .map((e) => ({
-      id: `g:${e.id}`,
-      title: e.title,
-      start: e.start,
-      durationMinutes: diffMinutes(e.start, e.end),
-      importance: null,
-      completed: false,
-      allDay: e.allDay,
-      source: "google" as const,
-    }));
+    .map(googleEventToItem);
 
   return [...appItems, ...externalItems].sort(byStart);
 }

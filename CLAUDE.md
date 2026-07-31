@@ -44,7 +44,9 @@ npm run dev        # Next (localhost:3000) + the cron worker together (concurren
 npm run worker     # only the reminder worker (tsx watch)
 npm run build      # next build
 npm start          # next start + worker
-npm run db:push    # apply the Drizzle schema to the SQLite file (drizzle-kit push)
+npm run db:push    # LOCAL DEV ONLY: push schema straight to SQLite (can drop tables)
+npm run db:generate # write a versioned migration to ./drizzle after a schema change
+npm run db:migrate  # apply pending migrations (fresh deploys / prod) — see drizzle/README.md
 npm run typecheck  # tsc --noEmit
 npm test           # scheduling-brain test suite (scripts/brain.test.mts)
 npm run clear-tasks       # wipe every task (uses the app delete path → removes Google events too); -- --yes to skip confirm
@@ -71,7 +73,7 @@ There is no single-test runner or lint step — `npm test` runs the whole brain 
 - `lib/server/*.ts` — **server-only** (DB access via `db/`, Google, push, auth). Never import these into client components.
 - `lib/tasks.ts` — the **client** API layer: mutations are **optimistic**, then revalidate. Any task can appear in three SWR caches, so a mutation must invalidate all three: `/api/tasks`, `/api/today`, `/api/range`.
 
-**The whole task/to-do distinction is one nullable column:** a `tasks` row with a `scheduledStart` is a calendar block; without one it's an unscheduled to-do. Data model is five tables in `lib/server/db/schema.ts` (`users`, `tasks`, `settings` [one JSON row per user], `googleAccount` [one row per user, refresh token], `pushSubscriptions`) — everything but `users` carries a `userId`.
+**The whole task/to-do distinction is one nullable column:** a `tasks` row with a `scheduledStart` is a calendar block; without one it's an unscheduled to-do. Data model is six tables in `lib/server/db/schema.ts` (`users`, `tasks`, `taskEvents` [append-only behavioural log, `taskId` deliberately not a FK so history survives deletion], `settings` [one JSON row per user], `googleAccount` [one row per user, refresh token], `pushSubscriptions`) — everything but `users` carries a `userId`.
 
 **Auth:** Google OAuth sign-in → `users` row (matched by `google_sub`, falling back to email adoption) → signed httpOnly session cookie carrying the user id (`jose`). Route handlers get the caller via `requireUserId()` (`lib/server/session.ts`); every DB query is scoped by `userId`. `middleware.ts` gates everything except the `PUBLIC` list. `/api/google/callback` is intentionally public — it's an external redirect from Google that can't carry the session, so it's guarded by its own `g_state` CSRF cookie instead.
 

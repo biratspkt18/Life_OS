@@ -1,8 +1,20 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useDayItems, useInboxTasks, usePastUndoneTasks, useSettings } from "../hooks/useDb";
-import { useFittingSuggestions } from "../hooks/useSuggestions";
-import { windowForDay } from "../lib/types";
+import { useEnergyLane } from "../hooks/useEnergyLane";
+import { useGapSuggestion } from "../hooks/useGapSuggestion";
+import { useWindowException } from "../hooks/useWindowException";
+import { EnergyLaneToggle } from "../components/EnergyLaneToggle";
+import { DayEdgePrompt } from "../components/DayEdgePrompt";
+import {
+  dayKeyOf,
+  effectiveWindowForDay,
+  getEdgePromptRaw,
+  markPromptAsked,
+  setEdgePromptRaw,
+  shouldPromptEdge,
+  type EdgeSide,
+} from "../lib/effectiveWindow";
 import type { Task } from "../lib/types";
 import {
   addDays,
@@ -14,8 +26,10 @@ import {
   timeLabel,
 } from "../lib/dates";
 import { buildDayShape, groupDay } from "../lib/dayShape";
+import { computeDayBattery } from "../lib/battery";
+import { DayBattery } from "../components/DayBattery";
 import { DayFeed } from "../components/DayFeed";
-import { LooseEndSuggestion } from "../components/LooseEndSuggestion";
+import { GapSuggestionCard } from "../components/GapSuggestionCard";
 import { DoneToday } from "../components/DoneToday";
 import { Timeline } from "../components/overview/Timeline";
 import { openCapture, openEdit } from "../components/Capture";
@@ -48,17 +62,58 @@ export function TodayView({ now }: { now: Date }) {
   const settings = useSettings();
   const items = useDayItems(day);
 
-  const dayWindow = useMemo(() => windowForDay(settings, day), [settings, day]);
+  // The day's *effective* window: per-weekday settings plus today's one-day
+  // exception ("started early today"), if any. Everything downstream — shape,
+  // battery capacity, gap suggestions — reads this.
+  const { exception } = useWindowException();
+  const dayWindow = useMemo(
+    () => effectiveWindowForDay(settings, day, exception),
+    [settings, day, exception],
+  );
   const shape = useMemo(
-    () => buildDayShape(items, dayWindow, day, now, settings.defaultDurationMinutes),
-    [items, dayWindow, day, now, settings.defaultDurationMinutes],
+    () =>
+      buildDayShape(items, dayWindow, day, now, settings.defaultDurationMinutes, {
+        extendToNow: isToday,
+      }),
+    [items, dayWindow, day, now, settings.defaultDurationMinutes, isToday],
   );
   const groups = useMemo(() => groupDay(items, now), [items, now]);
 
-  // "Got a little room?" — slipped tasks *and* unscheduled to-dos that actually
-  // fit an open slot today, ordered by soonest-fit, then urgency, then
-  // importance. The current spotlight is excluded so we never suggest it.
-  const suggestions = useFittingSuggestions(now, groups.spotlight?.id);
+  // The Day Battery — how heavy the day as built is (duration × energy over
+  // the window's capacity). A mirror only; capacity follows the day's window.
+  const battery = useMemo(
+    () => computeDayBattery(items, dayWindow, day, settings.defaultDurationMinutes),
+    [items, dayWindow, day, settings.defaultDurationMinutes],
+  );
+
+  // The energy lane — "how I'm feeling right now". Device-scoped, resets each
+  // day, and narrows only the suggestion card's candidate pool below; it never
+  // hides or moves scheduled blocks.
+  const { lane, setLane } = useEnergyLane(now);
+
+  // "Got a little room?" — the current open gap in today's schedule, plus the
+  // one slipped task or to-do best suited to fill it (deterministic pick shown
+  // instantly, AI re-rank + reason swapped in when it lands). The current
+  // spotlight is excluded so we never suggest it.
+  const gapSuggestion = useGapSuggestion(now, items, day, groups.spotlight?.id, {
+    lane: isToday ? lane : null,
+    window: dayWindow,
+    dayLoadPercent: battery.percent ?? undefined,
+  });
+
+  // "Start earlier / end later?" — offered after a task lands outside the
+  // window, at most once per side per day (a "No" also counts as asked).
+  const [edgePrompt, setEdgePrompt] = useState<{
+    side: EdgeSide;
+    taskStart: Date;
+    taskEnd: Date;
+  } | null>(null);
+  const handleOutsideCommit = (info: { side: EdgeSide; taskStart: Date; taskEnd: Date }) => {
+    const key = dayKeyOf(now);
+    if (!shouldPromptEdge(getEdgePromptRaw(), key, info.side)) return;
+    setEdgePromptRaw(markPromptAsked(getEdgePromptRaw(), key, info.side));
+    setEdgePrompt(info);
+  };
 
   // Unscheduled to-dos whose deadline (or preferred date) lands on today, so the
   // Today view surfaces what's actually due — the section hides when there's none.
@@ -82,7 +137,9 @@ export function TodayView({ now }: { now: Date }) {
     items.length > 0 &&
     groups.toGoCount === 0 &&
     groups.upcoming.length === 0 &&
-    suggestions.length === 0;
+    // A dismissed suggestion still counts — "Not now" shouldn't fake the
+    // celebration while something genuinely fits the remaining room.
+    !gapSuggestion.hasCandidates;
   const allClear = dayDone && inboxTodos.length === 0 && looseEnds.length === 0;
 
   const countLabel = useMemo(() => {
@@ -131,7 +188,31 @@ export function TodayView({ now }: { now: Date }) {
         </div>
       </header>
 
-      <Timeline shape={shape} now={now} isToday={isToday} />
+      {isToday && (
+        <div className="mb-3 flex items-center justify-end gap-2">
+          <span className="text-xs text-muted-soft">Feeling</span>
+          <EnergyLaneToggle lane={lane} onChange={setLane} />
+        </div>
+      )}
+
+      <Timeline
+        shape={shape}
+        now={now}
+        isToday={isToday}
+        onOutsideCommit={isToday ? handleOutsideCommit : undefined}
+      />
+
+      <DayBattery battery={battery} />
+
+      {edgePrompt && (
+        <DayEdgePrompt
+          side={edgePrompt.side}
+          taskStart={edgePrompt.taskStart}
+          taskEnd={edgePrompt.taskEnd}
+          day={day}
+          onClose={() => setEdgePrompt(null)}
+        />
+      )}
 
       <div className="mb-5 mt-5 grid grid-cols-2 gap-2">
         <Button
@@ -175,7 +256,7 @@ export function TodayView({ now }: { now: Date }) {
 
       <DayFeed groups={groups} now={now} />
 
-      {isToday && <LooseEndSuggestion suggestions={suggestions} now={now} />}
+      {isToday && <GapSuggestionCard s={gapSuggestion} />}
 
       {isToday && <DoneToday items={items} now={now} />}
 

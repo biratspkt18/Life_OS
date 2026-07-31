@@ -27,33 +27,44 @@ export const users = sqliteTable(
 );
 
 /** One scheduled (or captured) task, owned by a single user. */
-export const tasks = sqliteTable("tasks", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  title: text("title").notNull(),
-  durationMinutes: integer("duration_minutes").notNull(),
-  importance: text("importance").notNull(),
-  scheduledStart: text("scheduled_start"),
-  /** To-do deadline (ISO, date-only at start of day). Null = no hard deadline. */
-  dueDate: text("due_date"),
-  /** When you'd ideally get to it (ISO, date-only). Guides scheduling. */
-  preferredDate: text("preferred_date"),
-  googleEventId: text("google_event_id"),
-  completed: integer("completed", { mode: "boolean" }).notNull().default(false),
-  completedAt: text("completed_at"),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-  /** Set when a start-time push has been sent, so we never double-ping. */
-  pingedAt: text("pinged_at"),
-  /** Single user-created category, normalized text. Null = untagged. */
-  tag: text("tag"),
-  /** Optional energy cost: "low" | "medium" | "high". Null = unset. */
-  energy: text("energy"),
-  /** Server-managed count of user moves to a different day. Never client-set. */
-  deferralCount: integer("deferral_count").notNull().default(0),
-});
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    importance: text("importance").notNull(),
+    scheduledStart: text("scheduled_start"),
+    /** To-do deadline (ISO, date-only at start of day). Null = no hard deadline. */
+    dueDate: text("due_date"),
+    /** When you'd ideally get to it (ISO, date-only). Guides scheduling. */
+    preferredDate: text("preferred_date"),
+    googleEventId: text("google_event_id"),
+    completed: integer("completed", { mode: "boolean" }).notNull().default(false),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    /** Set when a start-time push has been sent, so we never double-ping. */
+    pingedAt: text("pinged_at"),
+    /** Single user-created category, normalized text. Null = untagged. */
+    tag: text("tag"),
+    /** Optional energy cost: "low" | "medium" | "high". Null = unset. */
+    energy: text("energy"),
+    /** Server-managed count of user moves to a different day. Never client-set. */
+    deferralCount: integer("deferral_count").notNull().default(0),
+  },
+  (t) => ({
+    // Every read scopes by user; the day/range/worker queries also bound by
+    // scheduledStart. This composite serves both (userId alone is the leftmost
+    // prefix), so no separate user-only index is needed.
+    userStartIdx: index("tasks_user_start_idx").on(t.userId, t.scheduledStart),
+    // Google-sync reconcile looks tasks up by their calendar event id.
+    googleEventIdx: index("tasks_google_event_idx").on(t.googleEventId),
+  }),
+);
 
 /**
  * Append-only behavioral event log, one row per task lifecycle moment.

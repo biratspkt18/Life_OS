@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { config } from "@/lib/server/config";
+import { geminiText } from "@/lib/server/gemini";
 import { logEvent } from "@/lib/server/events";
 import { getTask } from "@/lib/server/tasks";
 import { requireUserId } from "@/lib/server/session";
@@ -22,8 +24,8 @@ export async function POST(req: Request) {
   const task = getTask(userId, b.taskId);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const key = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const key = config.gemini.apiKey;
+  const model = config.gemini.model;
 
   const done = (result: { llmUsed: boolean; steps: string[]; unavailable?: boolean }) => {
     logEvent(userId, {
@@ -77,12 +79,7 @@ export async function POST(req: Request) {
       console.warn(`[breakdown] Gemini responded ${res.status}`);
       return done({ llmUsed: false, steps: [], unavailable: true });
     }
-    const json = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const text =
-      json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    const steps = parseStepsResponse(text);
+    const steps = parseStepsResponse(geminiText(await res.json()));
     if (!steps) return done({ llmUsed: false, steps: [], unavailable: true });
     return done({ llmUsed: true, steps });
   } catch (err) {

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { useAllTasks, useExternalBusy, useSettings } from "../hooks/useDb";
+import { useWindowException } from "../hooks/useWindowException";
 import { ConflictError, rescheduleTask, updateTask } from "../lib/tasks";
 import type { Task } from "../lib/types";
 import { findFreeSlots } from "../lib/freeSlots";
@@ -119,6 +120,7 @@ function TimePicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
   const allTasks = useAllTasks();
   const today = useMemo(() => startOfDay(now), [now]);
   const externalBusy = useExternalBusy(today, HORIZON_DAYS);
+  const { exception } = useWindowException();
 
   // Every free start-time across the horizon that this task actually fits into.
   const slots = useMemo(
@@ -135,8 +137,9 @@ function TimePicker({ task, now, onDone }: { task: Task; now: Date; onDone: () =
         stepMinutes: 30,
         maxPerDay: 80,
         limit: 600,
+        windowException: exception,
       }),
-    [task, settings, allTasks, now, today, externalBusy],
+    [task, settings, allTasks, now, today, externalBusy, exception],
   );
 
   const byDay = useMemo(() => {

@@ -12,6 +12,8 @@
     "start:worker": "tsx worker/scheduler.ts",
     "worker": "tsx watch worker/scheduler.ts",
     "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "migrate:multiuser": "tsx scripts/migrate-multiuser.mts",
     "clear-tasks": "tsx scripts/clear-tasks.mts",
     "seed-loose-ends": "tsx scripts/seed-loose-ends.mts",
@@ -19,7 +21,7 @@
     "seed-today": "tsx scripts/seed-today.mts",
     "seed-demo": "tsx scripts/seed-demo.mts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/brain.test.mts && tsx scripts/placement.test.mts && tsx scripts/deferral.test.mts && tsx scripts/breakdown.test.mts && tsx scripts/tags.test.mts"
+    "test": "tsx scripts/run-tests.mts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
@@ -37,7 +39,8 @@
     "react-dom": "^19.0.0",
     "swr": "^2.3.0",
     "tailwind-merge": "^3.6.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

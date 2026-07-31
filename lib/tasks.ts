@@ -264,6 +264,34 @@ export async function generateBreakdown(taskId: string): Promise<BreakdownResult
   });
 }
 
+/** What /api/suggest returns: the AI's gap pick, or "use the deterministic one". */
+export interface SuggestResult {
+  llmUsed: boolean;
+  pickId?: string;
+  reason?: string;
+  runnerUpId?: string | null;
+  runnerUpReason?: string | null;
+}
+
+export async function generateGapSuggestion(input: {
+  gapStart: Date;
+  gapEnd: Date;
+  candidateIds: string[];
+  /** The Day Battery percent, so the AI can favour lighter picks on full days. */
+  dayLoadPercent?: number;
+}): Promise<SuggestResult> {
+  return req<SuggestResult>("/api/suggest", {
+    method: "POST",
+    body: JSON.stringify({
+      gapStart: input.gapStart.toISOString(),
+      gapEnd: input.gapEnd.toISOString(),
+      candidateIds: input.candidateIds,
+      tzOffsetMinutes: new Date().getTimezoneOffset(),
+      ...(input.dayLoadPercent != null ? { dayLoadPercent: input.dayLoadPercent } : {}),
+    }),
+  });
+}
+
 /** Turn the approved steps into real to-dos and retire the parent task. */
 export async function acceptBreakdown(
   taskId: string,

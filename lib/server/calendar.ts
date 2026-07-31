@@ -13,6 +13,30 @@ export interface CalendarEvent {
 }
 
 /**
+ * A short per-(user, window) cache of successful event fetches. The Today view
+ * polls `/api/today` every 30s and the month grid + external-busy hooks poll
+ * `/api/range`, each of which calls `listEvents`; without this, a single open
+ * tab hit Google's Calendar API every few seconds forever. A ~15s TTL means
+ * rapid identical-range polls reuse one fetch while external changes still
+ * appear within seconds; any write to the user's calendar clears it at once.
+ */
+interface EventsCacheEntry {
+  events: CalendarEvent[];
+  expires: number;
+}
+const eventsCache = new Map<string, EventsCacheEntry>();
+const EVENTS_CACHE_TTL_MS = 15_000;
+const eventsCacheKey = (userId: string, min: string, max: string) => `${userId}|${min}|${max}`;
+
+/** Drop a user's cached event windows (call after mutating their calendar). */
+export function invalidateEventsCache(userId: string): void {
+  const prefix = `${userId}|`;
+  for (const key of eventsCache.keys()) {
+    if (key.startsWith(prefix)) eventsCache.delete(key);
+  }
+}
+
+/**
  * List events on the primary calendar within [timeMin, timeMax].
  *
  * Returns `null` when Google isn't connected. **Throws** if the API call fails,
@@ -27,6 +51,11 @@ export async function listEvents(
 ): Promise<CalendarEvent[] | null> {
   const c = await getCalendarClient(userId);
   if (!c) return null;
+
+  const cacheKey = eventsCacheKey(userId, timeMinISO, timeMaxISO);
+  const cached = eventsCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached.events;
+
   const items = [];
   try {
     // Follow nextPageToken so a busy window can't silently truncate — a
@@ -55,7 +84,7 @@ export async function listEvents(
     }
     throw err; // genuine/transient error — bubble up so callers don't wipe tasks.
   }
-  return items
+  const events = items
     .filter((e) => e.status !== "cancelled" && e.id)
     .map((e) => ({
       id: e.id!,
@@ -70,6 +99,8 @@ export async function listEvents(
       end: e.end?.dateTime ?? e.end?.date ?? null,
       allDay: !e.start?.dateTime,
     }));
+  eventsCache.set(cacheKey, { events, expires: Date.now() + EVENTS_CACHE_TTL_MS });
+  return events;
 }
 
 /**
@@ -122,6 +153,7 @@ export async function createEvent(userId: string, task: Task): Promise<string | 
       calendarId: c.calendarId,
       requestBody: eventBody(task),
     });
+    invalidateEventsCache(userId);
     return res.data.id ?? null;
   } catch (err) {
     if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
@@ -140,6 +172,7 @@ export async function updateEvent(userId: string, task: Task): Promise<void> {
       eventId: task.googleEventId,
       requestBody: eventBody(task),
     });
+    invalidateEventsCache(userId);
   } catch (err) {
     if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     console.error("[calendar] update failed:", err);
@@ -151,6 +184,7 @@ export async function deleteEvent(userId: string, eventId: string): Promise<void
   if (!c) return;
   try {
     await c.calendar.events.delete({ calendarId: c.calendarId, eventId });
+    invalidateEventsCache(userId);
   } catch (err) {
     if (isInvalidGrant(err)) invalidateGoogleTokens(userId);
     // 404/410 = already gone; anything else we just log.
