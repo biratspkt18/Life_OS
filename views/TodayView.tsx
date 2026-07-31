@@ -17,7 +17,6 @@ import {
 } from "../lib/effectiveWindow";
 import type { Task } from "../lib/types";
 import {
-  addDays,
   dayLabel,
   durationLabel,
   format,
@@ -37,27 +36,10 @@ import { FlagIcon, PlusIcon } from "../components/icons";
 import { Button } from "../components/ui/button";
 import { Celebration } from "../components/Celebration";
 
-/** You can browse at most this many days on either side of today. */
-const DAY_RANGE = 7;
-
 export function TodayView({ now }: { now: Date }) {
-  // The day being viewed — defaults to today every time the app opens.
-  const [day, setDay] = useState<Date>(() => startOfDay(now));
+  // The homepage always shows today — no day browsing here.
+  const [day] = useState<Date>(() => startOfDay(now));
   const isToday = isSameDay(day, now);
-
-  // Browsing is capped to ±7 days around today; the arrows disable at the edges.
-  const today = useMemo(() => startOfDay(now), [now]);
-  const minDay = useMemo(() => addDays(today, -DAY_RANGE), [today]);
-  const maxDay = useMemo(() => addDays(today, DAY_RANGE), [today]);
-  const atMin = day.getTime() <= minDay.getTime();
-  const atMax = day.getTime() >= maxDay.getTime();
-  const step = (delta: number) =>
-    setDay((d) => {
-      const next = addDays(d, delta);
-      if (next.getTime() < minDay.getTime()) return minDay;
-      if (next.getTime() > maxDay.getTime()) return maxDay;
-      return next;
-    });
 
   const settings = useSettings();
   const items = useDayItems(day);
@@ -162,24 +144,6 @@ export function TodayView({ now }: { now: Date }) {
           {isToday && (
             <p className="text-sm font-semibold text-accent">{timeLabel(now)}</p>
           )}
-          <div className="flex items-center gap-1">
-            <DayNavButton label="Previous day" onClick={() => step(-1)} disabled={atMin}>
-              ‹
-            </DayNavButton>
-            {!isToday && (
-              <Button
-                variant="ghost"
-                size="pill"
-                onClick={() => setDay(today)}
-                className="text-muted hover:text-ink"
-              >
-                Today
-              </Button>
-            )}
-            <DayNavButton label="Next day" onClick={() => step(1)} disabled={atMax}>
-              ›
-            </DayNavButton>
-          </div>
           {countLabel && (
             <p className="text-xs font-medium uppercase tracking-wide text-muted-soft">
               {countLabel}
@@ -300,30 +264,5 @@ function DueRow({ task, due }: { task: Task; due: boolean }) {
         {durationLabel(task.durationMinutes)}
       </span>
     </button>
-  );
-}
-
-function DayNavButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      variant="outline"
-      size="icon"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      className="text-lg leading-none text-muted hover:text-ink"
-    >
-      {children}
-    </Button>
   );
 }
