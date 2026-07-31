@@ -273,11 +273,25 @@ export function DayPlacer({
     onChange(addMinutes(windowStart, startMin));
   }
 
+  /** Density-quantized step for the current track width. */
+  function dragStep(): number {
+    const rect = trackRef.current?.getBoundingClientRect();
+    return rect ? stepForDensity(rect.width / windowMinutes) : STEP_MIN;
+  }
+
+  // Grab the ghost where it sits and drag from there (threshold guards a tap).
   function onGhostPointerDown(e: React.PointerEvent) {
     if (disabled || drag || ghostMin == null) return;
-    const rect = trackRef.current?.getBoundingClientRect();
-    const step = rect ? stepForDensity(rect.width / windowMinutes) : STEP_MIN;
-    begin(e, { step }, ghostMin);
+    e.stopPropagation(); // don't also trigger the track's click-to-place
+    begin(e, { step: dragStep() }, ghostMin);
+  }
+
+  // Click-to-place: tapping an empty spot on the bar jumps the ghost's start to
+  // the clicked minute (snapped to a valid slot), then it follows the pointer
+  // and commits on release — no dragging required.
+  function onTrackPointerDown(e: React.PointerEvent) {
+    if (disabled || drag || ghostMin == null || e.button !== 0) return;
+    begin(e, { step: dragStep() }, pointerMinutes(e.clientX), true);
   }
 
   /** Arrow-key nudge to the next free spot in `dir`. */
@@ -378,6 +392,7 @@ export function DayPlacer({
         ref={trackRef}
         className="relative w-full"
         style={{ height: TRACK_PX, touchAction: drag ? "none" : undefined, marginTop: DRAG_LIFT_PX + 14 }}
+        onPointerDown={onTrackPointerDown}
         {...trackHandlers}
       >
         {/* Rounded fill + hour gridlines + past shade + now marker (clipped). */}
@@ -545,7 +560,7 @@ export function DayPlacer({
       {/* Signpost the interaction — the bar isn't obviously draggable on its own. */}
       {!noRoom && !typed && ghostMin != null && (
         <p className="mt-2 text-xs text-muted">
-          Drag the block to an{" "}
+          Tap or drag to an{" "}
           <span className="font-medium text-accent">open slot</span>
           {showSuggestions ? ", or tap a suggested time below" : ""}.
         </p>

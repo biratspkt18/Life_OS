@@ -41,8 +41,12 @@ export function usePointerDrag<P>(opts: {
   onDragStart?: () => void;
 }): {
   drag: DragState<P> | null;
-  /** Call from a target's onPointerDown; `atMin` is where that target sits now. */
-  begin: (e: PointerEvent, payload: P, atMin: number) => void;
+  /**
+   * Call from a target's onPointerDown; `atMin` is where that target sits now.
+   * `immediate` skips the press→drag threshold, so a plain click on the track
+   * teleports the target under the pointer and commits on release (no drag).
+   */
+  begin: (e: PointerEvent, payload: P, atMin: number, immediate?: boolean) => void;
   trackHandlers: {
     onPointerMove: (e: PointerEvent) => void;
     onPointerUp: (e: PointerEvent) => void;
@@ -60,12 +64,27 @@ export function usePointerDrag<P>(opts: {
     payload: P;
   } | null>(null);
 
-  function begin(e: PointerEvent, payload: P, atMin: number) {
+  function begin(e: PointerEvent, payload: P, atMin: number, immediate = false) {
+    const grabOffsetMin = opts.toMinutes(e.clientX) - atMin;
+    if (immediate) {
+      // The drag is live from the first frame — the target jumps to the pointer
+      // now, follows it if the press moves, and commits on release.
+      try {
+        opts.trackRef.current?.setPointerCapture(e.pointerId);
+      } catch {
+        /* capture is best-effort */
+      }
+      opts.onDragStart?.();
+      const r = opts.resolve(opts.toMinutes(e.clientX) - grabOffsetMin, payload);
+      pending.current = null;
+      setDrag({ pointerId: e.pointerId, grabOffsetMin, payload, ...r });
+      return;
+    }
     pending.current = {
       pointerId: e.pointerId,
       x: e.clientX,
       y: e.clientY,
-      grabOffsetMin: opts.toMinutes(e.clientX) - atMin,
+      grabOffsetMin,
       payload,
     };
   }
