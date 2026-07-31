@@ -3,13 +3,16 @@ import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { batteryBreakdownLabel, type DayBattery } from "../lib/battery";
 
+/** A full day is ten blocks — each one a tenth of the working window. */
+const SEGMENTS = 10;
+
 /**
- * A compact readout of the day's *intensity* — how heavy the day you've built
- * is (each task's length weighted by its energy, over the working window). It
- * sits in the header beside the clock and the to-go count so it reads as part
- * of the app's day summary, never mistaken for the device's battery. A mirror
- * only: no warnings; past 100% the colour just shifts and the number keeps
- * counting. Tap to see the split by energy.
+ * The day's *intensity* — how heavy the day you've built is (each task's length
+ * weighted by its energy, over the working window) — shown as a retro segmented
+ * battery of ten blocks. It sits in the header so it reads as part of the app's
+ * day summary, never the device's battery. A mirror only: no warnings; past
+ * 100% every block fills and turns gold, and the number keeps counting. Tap to
+ * see the split by energy.
  */
 export function DayIntensity({ intensity }: { intensity: DayBattery }) {
   const [open, setOpen] = useState(false);
@@ -17,7 +20,8 @@ export function DayIntensity({ intensity }: { intensity: DayBattery }) {
 
   if (intensity.percent == null) return null;
   const over = intensity.percent > 100;
-  const fillPct = Math.min(intensity.percent, 100);
+  // How many of the ten blocks are lit — rounded, and capped when over 100%.
+  const filled = Math.max(0, Math.min(SEGMENTS, Math.round(Math.min(intensity.percent, 100) / 10)));
   const breakdown = batteryBreakdownLabel(intensity);
 
   return (
@@ -30,14 +34,25 @@ export function DayIntensity({ intensity }: { intensity: DayBattery }) {
         className="flex items-center gap-1.5 text-xs font-medium tabular-nums"
       >
         <span className="uppercase tracking-wide text-muted-soft">Intensity</span>
-        <span className="relative h-1.5 w-14 overflow-hidden rounded-full bg-paper-edge/70">
-          <motion.span
-            className={`absolute inset-y-0 left-0 rounded-full ${over ? "bg-gold" : "bg-accent"}`}
-            initial={false}
-            animate={{ width: `${fillPct}%` }}
-            transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 220, damping: 30 }}
-          />
+
+        {/* Retro segmented battery: ten blocks in a bordered body + a terminal nub. */}
+        <span className="flex items-center gap-[2px]" aria-hidden>
+          <span
+            className="flex h-3.5 items-stretch gap-[1.5px] rounded-[3px] border border-muted/40 p-[2px]"
+            style={{ width: 68 }}
+          >
+            {Array.from({ length: SEGMENTS }).map((_, i) => (
+              <span
+                key={i}
+                className={`flex-1 rounded-[1px] transition-colors motion-reduce:transition-none ${
+                  i < filled ? (over ? "bg-gold" : "bg-accent") : "bg-muted/15"
+                }`}
+              />
+            ))}
+          </span>
+          <span className="h-1.5 w-[2px] rounded-r-[1px] bg-muted/40" />
         </span>
+
         <span className={over ? "text-gold-soft" : "text-muted"}>{intensity.percent}%</span>
       </button>
 
