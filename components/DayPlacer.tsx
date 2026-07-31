@@ -2,6 +2,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useDayItems, useSettings } from "../hooks/useDb";
+import { usePointerDrag } from "../hooks/usePointerDrag";
 import { buildDayShape, type Block, type DayShape } from "../lib/dayShape";
 import { effectiveWindowForDay } from "../lib/effectiveWindow";
 import { useWindowException } from "../hooks/useWindowException";
@@ -19,7 +20,6 @@ import {
 const TRACK_PX = 44;
 const LIFT_PX = 26; // how far an overlapped block rises to make room
 const DRAG_LIFT_PX = 14; // how far the ghost floats while it can't drop
-const DRAG_THRESHOLD_PX = 4; // pointer travel before a press becomes a drag
 const SETTLE = { type: "spring", stiffness: 520, damping: 34 } as const;
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -117,17 +117,6 @@ export function useFirstFit(
   }, [settings, items, day, now, durationMinutes, excludeId, preferred, exception]);
 }
 
-/** Live drag state for the ghost block. */
-interface GhostDrag {
-  pointerId: number;
-  grabOffsetMin: number;
-  startMin: number;
-  conflict: boolean;
-  overlapIds: string[];
-  snapped: boolean;
-  step: number;
-}
-
 /** An exact-time entry that can't be placed (kept local so the red ghost can show why). */
 interface TypedInvalid {
   text: string;
@@ -222,25 +211,7 @@ export function DayPlacer({
   );
 
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const [drag, setDrag] = useState<GhostDrag | null>(null);
   const [typed, setTyped] = useState<TypedInvalid | null>(null);
-  const pending = useRef<{
-    pointerId: number;
-    x: number;
-    y: number;
-    grabOffsetMin: number;
-    step: number;
-  } | null>(null);
-
-  // A day switch invalidates any in-flight drag or rejected typed time —
-  // reset during render (the sanctioned derive-from-props pattern).
-  const [seenDay, setSeenDay] = useState(day.toDateString());
-  if (day.toDateString() !== seenDay) {
-    setSeenDay(day.toDateString());
-    setTyped(null);
-    setDrag(null);
-    pending.current = null;
-  }
 
   /** Pointer x → minutes from window start (clamped to the track). */
   const pointerMinutes = useCallback(
@@ -252,6 +223,43 @@ export function DayPlacer({
     },
     [windowMinutes],
   );
+
+  /** Snap a raw dragged start into a placement (density step chosen per drag). */
+  const resolve = useCallback(
+    (rawStart: number, payload: { step: number }) =>
+      resolvePlacement({
+        others: spans,
+        windowMinutes,
+        durationMin,
+        rawStartMin: rawStart,
+        stepMin: payload.step,
+        minStartMin: minStart,
+      }),
+    [spans, windowMinutes, durationMin, minStart],
+  );
+
+  // The shared pointer-drag machine (also drives the Today timeline).
+  const { drag, begin, trackHandlers, reset } = usePointerDrag<{ step: number }>({
+    trackRef,
+    toMinutes: pointerMinutes,
+    resolve,
+    commit: (d) => {
+      if (d.conflict) return; // blocked → springs back to the resting spot
+      setTyped(null);
+      const start = addMinutes(windowStart, d.startMin);
+      onChange(start);
+      onRelease?.(start);
+    },
+  });
+
+  // A day switch invalidates any in-flight drag or rejected typed time —
+  // reset during render (the sanctioned derive-from-props pattern).
+  const [seenDay, setSeenDay] = useState(day.toDateString());
+  if (day.toDateString() !== seenDay) {
+    setSeenDay(day.toDateString());
+    setTyped(null);
+    reset();
+  }
 
   // Where the ghost sits right now, in window minutes (null = nothing to show).
   const valueMin = value ? minutesBetween(windowStart, value) : null;
@@ -268,84 +276,8 @@ export function DayPlacer({
   function onGhostPointerDown(e: React.PointerEvent) {
     if (disabled || drag || ghostMin == null) return;
     const rect = trackRef.current?.getBoundingClientRect();
-    pending.current = {
-      pointerId: e.pointerId,
-      x: e.clientX,
-      y: e.clientY,
-      grabOffsetMin: pointerMinutes(e.clientX) - ghostMin,
-      step: rect ? stepForDensity(rect.width / windowMinutes) : STEP_MIN,
-    };
-  }
-
-  function onTrackPointerMove(e: React.PointerEvent) {
-    const p = pending.current;
-    if (!drag && p && e.pointerId === p.pointerId) {
-      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD_PX) return;
-      const el = trackRef.current;
-      if (el) {
-        try {
-          el.setPointerCapture(p.pointerId);
-        } catch {
-          /* capture is best-effort */
-        }
-      }
-      setTyped(null);
-      const r = resolvePlacement({
-        others: spans,
-        windowMinutes,
-        durationMin,
-        rawStartMin: pointerMinutes(e.clientX) - p.grabOffsetMin,
-        stepMin: p.step,
-        minStartMin: minStart,
-      });
-      setDrag({
-        pointerId: p.pointerId,
-        grabOffsetMin: p.grabOffsetMin,
-        step: p.step,
-        startMin: r.startMin,
-        conflict: r.conflict,
-        overlapIds: r.overlapIds,
-        snapped: r.snapped,
-      });
-      return;
-    }
-    if (drag && e.pointerId === drag.pointerId) {
-      e.preventDefault();
-      const r = resolvePlacement({
-        others: spans,
-        windowMinutes,
-        durationMin,
-        rawStartMin: pointerMinutes(e.clientX) - drag.grabOffsetMin,
-        stepMin: drag.step,
-        minStartMin: minStart,
-      });
-      setDrag((d) =>
-        d
-          ? { ...d, startMin: r.startMin, conflict: r.conflict, overlapIds: r.overlapIds, snapped: r.snapped }
-          : d,
-      );
-    }
-  }
-
-  function onTrackPointerUp(e: React.PointerEvent) {
-    const d = drag;
-    pending.current = null;
-    if (!d || e.pointerId !== d.pointerId) return;
-    const el = trackRef.current;
-    if (el) {
-      try {
-        el.releasePointerCapture(d.pointerId);
-      } catch {
-        /* already released */
-      }
-    }
-    if (!d.conflict) {
-      const start = addMinutes(windowStart, d.startMin);
-      setTyped(null);
-      onChange(start);
-      onRelease?.(start);
-    }
-    setDrag(null); // blocked → springs back to the resting spot
+    const step = rect ? stepForDensity(rect.width / windowMinutes) : STEP_MIN;
+    begin(e, { step }, ghostMin);
   }
 
   /** Arrow-key nudge to the next free spot in `dir`. */
@@ -446,9 +378,7 @@ export function DayPlacer({
         ref={trackRef}
         className="relative w-full"
         style={{ height: TRACK_PX, touchAction: drag ? "none" : undefined, marginTop: DRAG_LIFT_PX + 14 }}
-        onPointerMove={onTrackPointerMove}
-        onPointerUp={onTrackPointerUp}
-        onPointerCancel={onTrackPointerUp}
+        {...trackHandlers}
       >
         {/* Rounded fill + hour gridlines + past shade + now marker (clipped). */}
         <div className="absolute inset-0 overflow-hidden rounded-lg bg-paper-edge/70">

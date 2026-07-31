@@ -12,38 +12,24 @@ import { openEdit } from "../Capture";
 import { ActionMenu, ContextMenu, type MenuAction } from "../ActionMenu";
 import { ImportanceMark } from "../pickers";
 import { CheckIcon, ClockIcon, EditIcon, TrashIcon } from "../icons";
+import { usePointerDrag } from "../../hooks/usePointerDrag";
 
 const TRACK_PX = 44; // thick, easy to read
 
 // Drag-to-schedule tuning (quantize/magnet maths live in lib/placement).
 const LIFT_PX = 26; // how far an overlapped block rises above the bar to make room
 const DRAG_LIFT_PX = 14; // how far the dragged block floats while it can't drop (conflict)
-const DRAG_THRESHOLD_PX = 4; // pointer travel before a press becomes a drag (vs a hover/tap)
 /** Springy settle shared by the lift, the magnet snap, and the drop. */
 const SETTLE = { type: "spring", stiffness: 520, damping: 34 } as const;
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
-/**
- * Live drag state for a timeline block being repositioned by pointer. All times
- * are minutes from the window start, so overlap / snap math stays integer-simple.
- */
-interface DragState {
+/** What the drag carries for a timeline block (the rest lives in the shared hook). */
+interface BlockDrag {
   id: string;
-  pointerId: number;
   durationMin: number;
-  /** Where the block started (to detect a no-op drop and to spring back to). */
+  /** Where the block started — to detect a no-op drop and to spring back to. */
   originMin: number;
-  /** pointer-minute minus start-minute at grab, so the block doesn't jump under the finger. */
-  grabOffsetMin: number;
-  /** Current proposed start (quantized / snapped). */
-  startMin: number;
-  /** The proposed slot overlaps another block — can't drop here. */
-  conflict: boolean;
-  /** Ids of the blocks the proposal currently overlaps (they lift out of the way). */
-  liftedIds: string[];
-  /** The magnet engaged this frame (snapped flush to a neighbour / edge). */
-  snapped: boolean;
 }
 
 /**
@@ -157,18 +143,6 @@ export function Timeline({
   // ── Drag-to-schedule ──────────────────────────────────────────────────────
   const reduceMotion = useReducedMotion();
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
-  // A press that hasn't yet moved past the threshold — kept in a ref so it
-  // doesn't re-render, and so a tiny wobble stays a hover/tap, not a drag.
-  const pending = useRef<{
-    id: string;
-    pointerId: number;
-    x: number;
-    y: number;
-    durationMin: number;
-    originMin: number;
-    grabOffsetMin: number;
-  } | null>(null);
 
   // Only your own, still-open tasks can be dragged — Google events are read-only
   // and a done block shouldn't silently un-complete itself when nudged.
@@ -203,100 +177,53 @@ export function Timeline({
    * extended pre-day zone behind the clock.
    */
   const resolve = useCallback(
-    (id: string, durationMin: number, rawStart: number) => {
+    (rawStart: number, payload: BlockDrag) => {
       const minStartMin = isToday
         ? Math.max(0, Math.ceil(minutesBetween(barStart, now) / STEP_MIN) * STEP_MIN)
         : 0;
-      const r = resolvePlacement({
-        others: blockMins.filter((o) => o.id !== id),
+      return resolvePlacement({
+        others: blockMins.filter((o) => o.id !== payload.id),
         windowMinutes: barMinutes,
-        durationMin,
+        durationMin: payload.durationMin,
         rawStartMin: rawStart,
         minStartMin,
       });
-      return { startMin: r.startMin, conflict: r.conflict, liftedIds: r.overlapIds, snapped: r.snapped };
     },
     [blockMins, barMinutes, barStart, now, isToday],
   );
+
+  // The shared pointer-drag machine (also drives the capture-sheet placer).
+  const { drag, begin, trackHandlers } = usePointerDrag<BlockDrag>({
+    trackRef,
+    toMinutes: pointerMinutes,
+    resolve,
+    onDragStart: () => {
+      setActiveId(null); // drop the hover popover the instant a drag starts
+      setCtxMenu(null);
+    },
+    commit: (d) => {
+      // No-op or blocked → spring back to origin (hook clears the drag now).
+      if (d.conflict || d.startMin === d.payload.originMin) return;
+      const start = addMinutes(barStart, d.startMin);
+      const end = addMinutes(start, d.payload.durationMin);
+      // Landed outside the working window? Let the parent offer to move the
+      // day's edge. Fired alongside the reschedule — never blocks it.
+      if (start < windowStart) onOutsideCommit?.({ side: "start", taskStart: start, taskEnd: end });
+      else if (end > windowEnd) onOutsideCommit?.({ side: "end", taskStart: start, taskEnd: end });
+      // Returned so the block stays pinned at the drop until the optimistic
+      // cache update lands (no flicker back to the old slot).
+      return rescheduleTaskOptimistic(d.payload.id, start).catch(() => {
+        /* rollback handled inside; block springs home when drag clears */
+      });
+    },
+  });
 
   function onBlockPointerDown(e: React.PointerEvent, b: Block) {
     if (drag || !canDrag(b)) return;
     if (e.button !== 0) return; // only a primary-button press can become a drag
     const originMin = minutesBetween(barStart, b.start);
     const durationMin = Math.max(STEP_MIN, minutesBetween(b.start, b.end));
-    pending.current = {
-      id: b.item.id,
-      pointerId: e.pointerId,
-      x: e.clientX,
-      y: e.clientY,
-      durationMin,
-      originMin,
-      grabOffsetMin: pointerMinutes(e.clientX) - originMin,
-    };
-  }
-
-  function onTrackPointerMove(e: React.PointerEvent) {
-    const p = pending.current;
-    if (!drag && p && e.pointerId === p.pointerId) {
-      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD_PX) return;
-      const el = trackRef.current;
-      if (el) {
-        try {
-          el.setPointerCapture(p.pointerId);
-        } catch {
-          /* capture is best-effort */
-        }
-      }
-      setActiveId(null); // drop the hover popover the instant a drag starts
-      setCtxMenu(null);
-      const r = resolve(p.id, p.durationMin, pointerMinutes(e.clientX) - p.grabOffsetMin);
-      setDrag({
-        id: p.id,
-        pointerId: p.pointerId,
-        durationMin: p.durationMin,
-        originMin: p.originMin,
-        grabOffsetMin: p.grabOffsetMin,
-        ...r,
-      });
-      return;
-    }
-    if (drag && e.pointerId === drag.pointerId) {
-      e.preventDefault();
-      const r = resolve(drag.id, drag.durationMin, pointerMinutes(e.clientX) - drag.grabOffsetMin);
-      setDrag((d) => (d ? { ...d, ...r } : d));
-    }
-  }
-
-  function onTrackPointerUp(e: React.PointerEvent) {
-    const d = drag;
-    pending.current = null;
-    if (!d || e.pointerId !== d.pointerId) return;
-    const el = trackRef.current;
-    if (el) {
-      try {
-        el.releasePointerCapture(d.pointerId);
-      } catch {
-        /* already released */
-      }
-    }
-    // Commit only a real, conflict-free move. Keep the block pinned at the drop
-    // spot (drag stays set) until the optimistic cache update lands, so it never
-    // flickers back to the old slot; then clear.
-    if (!d.conflict && d.startMin !== d.originMin) {
-      const start = addMinutes(barStart, d.startMin);
-      const end = addMinutes(start, d.durationMin);
-      rescheduleTaskOptimistic(d.id, start)
-        .catch(() => {
-          /* rollback handled inside; block springs home when drag clears */
-        })
-        .finally(() => setDrag(null));
-      // Landed outside the working window? Let the parent offer to move the
-      // day's edge. Fired alongside the reschedule — never blocks it.
-      if (start < windowStart) onOutsideCommit?.({ side: "start", taskStart: start, taskEnd: end });
-      else if (end > windowEnd) onOutsideCommit?.({ side: "end", taskStart: start, taskEnd: end });
-    } else {
-      setDrag(null); // no-op or blocked → spring back to origin
-    }
+    begin(e, { id: b.item.id, durationMin, originMin }, originMin);
   }
 
   if (!shape.enabled || windowMinutes <= 0) {
@@ -325,9 +252,7 @@ export function Timeline({
         ref={trackRef}
         className="relative w-full"
         style={{ height: TRACK_PX, touchAction: drag ? "none" : undefined }}
-        onPointerMove={onTrackPointerMove}
-        onPointerUp={onTrackPointerUp}
-        onPointerCancel={onTrackPointerUp}
+        {...trackHandlers}
       >
         {/* Rounded fill + hour gridlines + now marker (clipped to the bar).
             The base is the grayer "outside my day" tone; the working window is
@@ -395,8 +320,8 @@ export function Timeline({
 
         {/* Activity segments — draggable when they're your own open tasks. */}
         {shape.blocks.map((b) => {
-          const dragging = drag?.id === b.item.id;
-          const lifted = !dragging && (drag?.liftedIds.includes(b.item.id) ?? false);
+          const dragging = drag?.payload.id === b.item.id;
+          const lifted = !dragging && (drag?.overlapIds.includes(b.item.id) ?? false);
           const leftPct = dragging ? (drag.startMin / barMinutes) * 100 : b.startPct;
           const y = dragging ? (drag.conflict ? -DRAG_LIFT_PX : 0) : lifted ? -LIFT_PX : 0;
           const draggable = canDrag(b);
@@ -442,7 +367,7 @@ export function Timeline({
               key="drag-time"
               aria-hidden
               className="pointer-events-none absolute z-40 -translate-x-1/2 whitespace-nowrap rounded-lg border border-paper-edge bg-paper-card px-2.5 py-1 text-center shadow-lift"
-              style={{ left: `${clamp(((drag.startMin + drag.durationMin / 2) / barMinutes) * 100, 13, 87)}%`, top: -DRAG_LIFT_PX }}
+              style={{ left: `${clamp(((drag.startMin + drag.payload.durationMin / 2) / barMinutes) * 100, 13, 87)}%`, top: -DRAG_LIFT_PX }}
               initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.92 }}
               animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.92 }}
@@ -453,7 +378,7 @@ export function Timeline({
               </span>
               <span className="mx-1 text-muted-soft">→</span>
               <span className="text-sm tabular-nums text-muted">
-                {timeLabel(addMinutes(barStart, drag.startMin + drag.durationMin))}
+                {timeLabel(addMinutes(barStart, drag.startMin + drag.payload.durationMin))}
               </span>
               <span
                 className={[
