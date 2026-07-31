@@ -156,17 +156,17 @@ export function TodayView({ now }: { now: Date }) {
 
       <div className="mb-5 mt-5 grid grid-cols-2 gap-2">
         <Button
-          variant="dashed"
+          variant="outline"
           onClick={() => openCapture({ day })}
-          className="h-auto rounded-2xl py-3"
+          className="h-auto w-full rounded-2xl border-accent/30 bg-paper-card py-3 font-semibold text-accent shadow-card hover:border-accent/60 hover:bg-accent-wash/50"
         >
           <PlusIcon className="h-4 w-4" />
           Add a task
         </Button>
         <Button
-          variant="dashed"
+          variant="outline"
           onClick={() => openCapture({ inbox: true })}
-          className="h-auto rounded-2xl py-3"
+          className="h-auto w-full rounded-2xl border-accent/30 bg-paper-card py-3 font-semibold text-accent shadow-card hover:border-accent/60 hover:bg-accent-wash/50"
         >
           <PlusIcon className="h-4 w-4" />
           Add a to-do
