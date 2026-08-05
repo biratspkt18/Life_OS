@@ -14,6 +14,51 @@ reminder scheduler.
 
 ---
 
+## Start here next session
+
+*Updated 2026-08-05.*
+
+**State:** `main` is clean and level with `origin/main` at `43d1ec4`. Nothing unpushed,
+no stashes, no unmerged branches — `feature/smart-suggestions-and-cleanup` and
+`life-os.biratspkt.com` are both fully contained in `main` and can be deleted whenever
+you like. `life-os.biratspkt.com` is up and serving the multi-user Google build; whether
+it's running the 31 July commits specifically hasn't been checked.
+
+**Get running:** `npm run dev` (Next on :3000 *plus* the reminder worker — both must run).
+Then `npm run typecheck` after touching `.ts`, `npm test` after touching the scheduling brain.
+
+### Most recent changes
+
+- **31 July — Today-screen pass.** Day-navigation arrows removed (the homepage is
+  today-only now); the header dropped the clock and the to-go count and shows only the day
+  meter, renamed **Battery → Intensity** and redrawn as a segmented 10-block battery
+  bottom-aligned with the date line; add-task buttons made prominent. `DayPlacer` gained
+  click-an-empty-slot placement so dragging is optional, and the timeline/placer drag logic
+  was deduped into a shared `usePointerDrag` hook. Landed alongside the smart-features +
+  modularity/scalability cleanup (`9021639`).
+- **Mid-July.** Multi-user Google sign-in replaced the passcode · Loose ends screen ·
+  drag-to-reschedule on the timeline · DayPlacer + Stats screen · search · tags, an `energy`
+  field, deferral tracking, LLM task breakdown (Gemini), and the append-only `task_events` log.
+
+### Next steps
+
+Roughly in the order they're worth doing:
+
+1. **Missed-date triage, part 2** — the on-app-open prompt for slipped dates. Blocked on
+   design answers, not code: how often it should appear, where dismissed-state lives, and how
+   to present several slipped items at once.
+2. **Confirm or flip decisions D5–D8** in `QA_AUDIT.md` — they were made provisionally and
+   never ratified.
+3. **Daily capacity + capacity-fitting proposals** — deliberately cut earlier; the schema
+   already supports it, so no migration is needed to pick it up.
+4. **Scheduling-brain roadmap:** buffers between blocks → auto-reflow when a block overruns →
+   subtasks → same-tag batching.
+5. **Housekeeping:** the seed scripts are broken under multi-user (they insert without
+   `user_id` → `NOT NULL constraint failed`); sample to-dos may still be sitting in the live
+   DB, and `npm run clear-tasks` would take real tasks with them — delete seeds by title instead.
+
+---
+
 ## Features
 
 - **Capture → schedule.** Add a task and pick from the times you're actually
